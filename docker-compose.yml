@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: amc_management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  backend:
+    build:
+      context: ./backend
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/amc_management
+      SYNC_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/amc_management
+      SECRET_KEY: super-secret-development-key
+      INITIAL_ADMIN_EMAIL: admin@example.com
+      INITIAL_ADMIN_PASSWORD: admin12345
+      NOTIFICATIONS_ENABLED: "false"
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - mailhog
+
+  frontend:
+    build:
+      context: ./frontend
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    working_dir: /app
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
