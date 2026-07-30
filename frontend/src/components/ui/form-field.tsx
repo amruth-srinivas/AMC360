@@ -28,11 +28,11 @@ export function FormField({
 }) {
   return (
     <div className={cn("grid gap-1.5", className)}>
-      <FieldLabel>{label}</FieldLabel>
+      <FieldLabel className="text-xs font-medium text-gray-700">{label}</FieldLabel>
       {Icon ? (
         <div className="relative">
-          <Icon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-100" />
-          <div className="[&_input]:pl-10">{children}</div>
+          <Icon className="pointer-events-none absolute left-2.5 top-2.5 z-10 h-3.5 w-3.5 text-gray-400" />
+          <div className="[&_input]:!pl-8 [&_textarea]:!pl-8">{children}</div>
         </div>
       ) : (
         children

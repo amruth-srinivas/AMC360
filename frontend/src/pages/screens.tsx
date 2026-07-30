@@ -40,17 +40,31 @@ import {
   FileText,
   Plus,
   X,
+  Eye,
+  Download,
+  Upload,
+  ArrowRight,
+  ArrowLeft,
+  Users,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import type React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "react-aria-components";
 
 import { Badge } from "../components/ui/badge";
 import { UserAvatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
 import { FormField, IconInput } from "../components/ui/form-field";
 import { Input, PasswordInput, Select, Textarea } from "../components/ui/input";
 import { Backdrop } from "../components/tailgrids/core/overlay";
@@ -76,12 +90,57 @@ import {
 import { api } from "../lib/api";
 import { formatDate } from "../lib/utils";
 import { useAuth } from "../store/auth";
+import { ProjectCalendarPanel } from "../components/project-calendar";
+import { ProjectReportLibrary } from "../components/project-report-library";
+import type { ReportType } from "../components/project-report-library";
+import {
+  TICKET_ISSUE_TYPES,
+  TicketDetailPanel,
+  issueTypeLabelFromValue,
+  type MaintenanceTicket,
+} from "../components/ticket-detail-panel";
+import { ProjectTicketsPanel } from "../components/project-tickets-panel";
 
 type ContactPerson = {
   name: string;
   designation?: string | null;
   email?: string | null;
   phone?: string | null;
+};
+
+type ProjectDocument = {
+  id: number;
+  project_id: number;
+  category: ProjectDocumentCategory;
+  title: string | null;
+  filename: string;
+  object_key: string;
+  content_type: string | null;
+  url: string | null;
+  created_at: string;
+};
+
+type ProjectDocumentCategory =
+  | "amc_terms"
+  | "sow"
+  | "contract"
+  | "technical"
+  | "invoice"
+  | "other";
+
+type PendingProjectDocument = {
+  localId: string;
+  category: ProjectDocumentCategory;
+  title: string;
+  file: File;
+};
+
+type ProjectUserSummary = {
+  id: number;
+  name: string;
+  email: string;
+  designation: string | null;
+  role: string;
 };
 
 type Project = {
@@ -98,20 +157,37 @@ type Project = {
   amc_terms_filename: string | null;
   amc_terms_url: string | null;
   team_lead_id: number | null;
+  team_lead?: ProjectUserSummary | null;
   member_ids: number[];
+  members?: ProjectUserSummary[];
+  documents?: ProjectDocument[];
 };
 
-type TicketRow = {
-  id: number;
-  project_id: number;
-  category: string;
-  priority: "P1" | "P2" | "P3";
-  status: "open" | "in_progress" | "resolved" | "closed";
-  title: string;
-  description: string;
-  assignee_id: number | null;
-  created_at: string;
-};
+const DOCUMENT_CATEGORIES: Array<{ value: ProjectDocumentCategory; label: string }> = [
+  { value: "amc_terms", label: "AMC Terms" },
+  { value: "sow", label: "Scope of Work" },
+  { value: "contract", label: "Contract" },
+  { value: "technical", label: "Technical" },
+  { value: "invoice", label: "Invoice" },
+  { value: "other", label: "Other" },
+];
+
+function documentCategoryLabel(category: string) {
+  return DOCUMENT_CATEGORIES.find((item) => item.value === category)?.label ?? category;
+}
+
+function isPreviewableDocument(contentType: string | null | undefined, filename: string) {
+  const lower = (contentType ?? "").toLowerCase();
+  const name = filename.toLowerCase();
+  return (
+    lower.includes("pdf") ||
+    name.endsWith(".pdf") ||
+    lower.startsWith("image/") ||
+    /\.(png|jpe?g|gif|webp|bmp)$/i.test(name)
+  );
+}
+
+type TicketRow = MaintenanceTicket;
 
 type ReportRow = {
   id: number;
@@ -134,9 +210,21 @@ type ApprovalRow = {
 type EventRow = {
   id: number;
   title: string;
+  description?: string | null;
+  start_at?: string;
+  end_at?: string;
   due_date: string;
   status: string;
   type: string;
+  event_type_id?: number | null;
+  project_id?: number | null;
+  color?: string | null;
+  meeting_link?: string | null;
+  is_milestone?: boolean;
+  milestones?: Array<{ id: string; title: string; done: boolean; created_at?: string }>;
+  owner_id?: number;
+  created_at?: string;
+  updated_at?: string;
 };
 
 const loginSchema = z.object({
@@ -199,28 +287,40 @@ const reportSchema = z.object({
 
 const ticketSchema = z.object({
   project_id: z.coerce.number(),
-  category: z.enum([
-    "incident",
-    "service_request",
-    "change_request",
-    "database",
-    "backup",
-    "access",
-    "performance",
-    "health_check",
-    "other",
+  issue_type: z.enum([
+    "application_crash",
+    "service_interruption",
+    "el_image_retrieval_failure",
+    "slow_image_loading",
+    "database_issue",
+    "integration_issue",
+    "access_functional_issue",
+    "authentication_authorization_issue",
+    "ui_functionality_error",
+    "data_corruption",
+    "db_indexing_problem",
+    "file_storage_issue",
+    "network_related_issue",
   ]),
   priority: z.enum(["P1", "P2", "P3"]),
   title: z.string().min(2),
   description: z.string().min(2),
+  details: z.string().optional(),
+  source: z.enum(["email", "manual"]),
+  reported_on: z.string().optional(),
 });
 
 const calendarSchema = z.object({
   project_id: z.coerce.number().optional(),
-  type: z.enum(["health_check", "db_restoration", "report_due", "custom"]),
+  type: z.string().min(1),
   title: z.string().min(2),
   due_date: z.string().min(5),
   owner_id: z.coerce.number(),
+  color: z.string().optional(),
+  meeting_link: z.string().optional(),
+  description: z.string().optional(),
+  status: z.enum(["scheduled", "in_progress", "done", "overdue", "cancelled"]).optional(),
+  is_milestone: z.boolean().optional(),
 });
 
 function Field({
@@ -369,9 +469,10 @@ function SummaryCard({
   );
 }
 
-function ticketStatusVariant(status: TicketRow["status"]): "danger" | "info" | "success" | "neutral" {
+function ticketStatusVariant(status: TicketRow["status"]): "danger" | "info" | "success" | "neutral" | "warning" {
   if (status === "open") return "danger";
   if (status === "in_progress") return "info";
+  if (status === "in_review") return "warning";
   if (status === "resolved") return "success";
   return "neutral";
 }
@@ -658,8 +759,8 @@ export function DashboardPage() {
         <Card className="px-5 py-4">
           <div className="mb-3 flex items-center justify-between">
             <SectionTitle>Pending approvals</SectionTitle>
-            <Link className="text-sm font-medium text-primary hover:text-primary/80" to="/approvals">
-              View all
+            <Link className="text-sm font-medium text-primary hover:text-primary/80" to="/projects">
+              View projects
             </Link>
           </div>
           <div className="grid gap-3">
@@ -716,56 +817,121 @@ export function DashboardPage() {
 
 export function ProjectsPage() {
   const projects = useProjects();
+
+  const statusTheme: Record<
+    Project["status"],
+    {
+      badge: "success" | "warning" | "danger" | "info" | "neutral";
+      accent: string;
+      soft: string;
+      ring: string;
+    }
+  > = {
+    active: {
+      badge: "success",
+      accent: "bg-success",
+      soft: "from-success-light/80 to-white",
+      ring: "hover:border-success/40 hover:shadow-success/10",
+    },
+    on_hold: {
+      badge: "warning",
+      accent: "bg-warning",
+      soft: "from-warning-light/80 to-white",
+      ring: "hover:border-warning/40 hover:shadow-warning/10",
+    },
+    completed: {
+      badge: "info",
+      accent: "bg-info",
+      soft: "from-info-light/90 to-white",
+      ring: "hover:border-info/40 hover:shadow-info/10",
+    },
+    cancelled: {
+      badge: "danger",
+      accent: "bg-danger",
+      soft: "from-danger-light/80 to-white",
+      ring: "hover:border-danger/40 hover:shadow-danger/10",
+    },
+  };
+
   return (
     <div>
       <PageHeader title="Projects" description="Client support projects, ownership, and member assignments." />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {(projects.data ?? []).map((project, index) => (
-          <motion.div
-            key={project.id}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.04 }}
-          >
-            <Card className="rounded-lg border border-gray-200 bg-white px-5 py-4 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-[11px] text-gray-400">{project.project_no}</p>
-                  <h2 className="mt-0.5 text-base font-semibold text-gray-900">{project.name}</h2>
-                  <p className="mt-0.5 text-sm text-gray-500">{project.client_name}</p>
-                  {project.customer_name ? (
-                    <p className="mt-1 text-xs text-gray-400">Customer: {project.customer_name}</p>
-                  ) : null}
-                </div>
-                <Badge
-                  variant={
-                    project.status === "active"
-                      ? "success"
-                      : project.status === "on_hold"
-                        ? "warning"
-                        : project.status === "cancelled"
-                          ? "danger"
-                          : "neutral"
-                  }
-                  format
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {(projects.data ?? []).map((project, index) => {
+          const docCount = project.documents?.length ?? 0;
+          const contactCount = project.contact_persons?.filter((person) => person.name?.trim()).length ?? 0;
+          const theme = statusTheme[project.status];
+
+          return (
+            <motion.div
+              key={project.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.04 }}
+            >
+              <Link to={`/projects/${project.id}`} className="block h-full">
+                <Card
+                  className={`relative h-full overflow-hidden border border-gray-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${theme.ring}`}
                 >
-                  {project.status}
-                </Badge>
-              </div>
-              <div className="mt-4 flex items-center justify-between text-sm">
-                <span className="text-xs text-gray-500">
-                  {project.member_ids.length} members
-                </span>
-                <Link
-                  className="text-sm font-medium text-primary hover:text-primary-dark"
-                  to={`/projects/${project.id}`}
-                >
-                  View →
-                </Link>
-              </div>
-            </Card>
-          </motion.div>
-        ))}
+                  <div className={`absolute inset-x-0 top-0 h-1 ${theme.accent}`} />
+                  <CardHeader className={`bg-gradient-to-b ${theme.soft} pb-0 pt-6`}>
+                    <CardAction>
+                      <Badge variant={theme.badge} format>
+                        {project.status}
+                      </Badge>
+                    </CardAction>
+                    <p className="inline-flex rounded-md bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-semibold tracking-wide text-primary">
+                      {project.project_no}
+                    </p>
+                    <CardTitle className="mt-2 pr-24 text-lg text-gray-900 md:text-xl">{project.name}</CardTitle>
+                    <CardDescription className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-600">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <Building2 className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="truncate">{project.client_name}</span>
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-3">
+                    <div className="space-y-2 text-sm text-gray-600">
+                      {project.customer_name ? (
+                        <p className="flex items-center gap-1.5 truncate">
+                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-success/10 text-success-dark">
+                            <User className="h-3.5 w-3.5" />
+                          </span>
+                          {project.customer_name}
+                        </p>
+                      ) : null}
+                      {project.details ? (
+                        <p className="line-clamp-2 text-xs leading-5 text-gray-500">{project.details}</p>
+                      ) : null}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
+                        <Users className="h-3 w-3" />
+                        {project.member_ids.length} members
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-success-light px-2 py-1 text-[11px] font-medium text-success-dark">
+                        <User className="h-3 w-3" />
+                        {contactCount} contacts
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-info-light px-2 py-1 text-[11px] font-medium text-info-dark">
+                        <FileText className="h-3 w-3" />
+                        {docCount} docs
+                      </span>
+                    </div>
+                  </CardContent>
+                  <CardFooter className="mt-auto flex items-center justify-between border-t border-primary/10 bg-primary-light/40 pt-3">
+                    <span className="text-xs font-medium text-primary/70">Open project</span>
+                    <span className="inline-flex items-center gap-1 text-sm font-semibold text-primary">
+                      View details
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  </CardFooter>
+                </Card>
+              </Link>
+            </motion.div>
+          );
+        })}
       </div>
     </div>
   );
@@ -774,71 +940,513 @@ export function ProjectsPage() {
 export function ProjectDetailPage() {
   const { id } = useParams();
   const projectId = Number(id);
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   const projects = useProjects();
   const reports = useReports();
   const tickets = useTickets();
-  const events = useEvents();
+  const approvals = useApprovals();
+  const projectEventsQuery = useQuery({
+    queryKey: ["calendar", projectId],
+    queryFn: () => api.get<EventRow[]>(`/calendar?project_id=${projectId}`),
+    enabled: Number.isFinite(projectId) && projectId > 0,
+  });
+  const reportTypesQuery = useQuery({
+    queryKey: ["project-report-types", projectId],
+    queryFn: () => api.get<ReportType[]>(`/projects/${projectId}/report-types`),
+    enabled: Number.isFinite(projectId) && projectId > 0,
+  });
+
+  const [activeTab, setActiveTab] = useState<
+    "details" | "tickets" | "reports" | "calendar" | "approvals"
+  >("details");
+  const [previewDoc, setPreviewDoc] = useState<{
+    title: string;
+    filename: string;
+    contentType: string | null;
+    blobUrl: string;
+  } | null>(null);
 
   const project = (projects.data ?? []).find((item) => item.id === projectId);
+  const teamLead = project?.team_lead ?? null;
+  const members = (project?.members ?? []).filter((member) => member.id !== project?.team_lead_id);
+  const contacts = (project?.contact_persons ?? []).filter((person) => person.name?.trim());
+  const documents = project?.documents ?? [];
+
+  const projectTickets = (tickets.data ?? []).filter((item) => item.project_id === projectId);
+  const projectReports = (reports.data ?? []).filter((item) => item.project_id === projectId);
+  const projectEvents = projectEventsQuery.data ?? [];
+  const reportLibraryTypes = reportTypesQuery.data ?? [];
+  const reportLibraryDocs = reportLibraryTypes.reduce(
+    (sum, item) => sum + (item.documents?.length ?? 0),
+    0,
+  );
+  const canManageReports =
+    user?.role === "admin" || Boolean(project?.team_lead_id && project.team_lead_id === user?.id);
+  const reportIds = new Set(projectReports.map((item) => item.id));
+  const ticketIds = new Set(projectTickets.map((item) => item.id));
+  const projectApprovals = (approvals.data ?? []).filter((item) => {
+    if (item.entity_type === "report_submission") return reportIds.has(item.entity_id);
+    if (item.entity_type === "rca_document" || item.entity_type === "ticket") {
+      return ticketIds.has(item.entity_id);
+    }
+    return false;
+  });
+
+  const approvalMutation = useMutation({
+    mutationFn: ({ id: approvalId, approved }: { id: number; approved: boolean }) =>
+      api.post(`/approvals/${approvalId}/decision`, { approved }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      toast.success("Decision saved");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const tabs = [
+    { id: "details" as const, label: "Details" },
+    { id: "tickets" as const, label: "Tickets", count: projectTickets.length },
+    {
+      id: "reports" as const,
+      label: "Reports",
+      count: reportLibraryDocs || reportLibraryTypes.length || projectReports.length,
+    },
+    { id: "calendar" as const, label: "Calendar", count: projectEvents.length },
+    { id: "approvals" as const, label: "Approvals", count: projectApprovals.length },
+  ];
+
+  async function openDocumentPreview(document: ProjectDocument) {
+    try {
+      const blob = await api.getBlob(`/projects/${projectId}/documents/${document.id}/content`);
+      const blobUrl = URL.createObjectURL(blob);
+      setPreviewDoc({
+        title: document.title || documentCategoryLabel(document.category),
+        filename: document.filename,
+        contentType: document.content_type || blob.type,
+        blobUrl,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to open document");
+    }
+  }
+
+  function closeDocumentPreview() {
+    setPreviewDoc((current) => {
+      if (current?.blobUrl) URL.revokeObjectURL(current.blobUrl);
+      return null;
+    });
+  }
+
+  useEffect(() => {
+    return () => {
+      if (previewDoc?.blobUrl) URL.revokeObjectURL(previewDoc.blobUrl);
+    };
+  }, [previewDoc?.blobUrl]);
+
+  if (!projects.isLoading && !project) {
+    return (
+      <div>
+        <PageHeader title="Project not found" description="This project may have been removed." />
+        <Link to="/projects" className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">
+          <ArrowLeft className="h-4 w-4" />
+          Back to projects
+        </Link>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <PageHeader
-        title={project?.name ?? "Project"}
-        description={project ? `Client: ${project.client_name}` : "Project detail"}
-      />
-      <div className="space-y-4">
-        <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="px-5 py-4">
-          <SectionTitle>Reports</SectionTitle>
-          <div className="grid gap-3">
-            {(reports.data ?? [])
-              .filter((item) => item.project_id === projectId)
-              .slice(0, 5)
-              .map((item) => (
-                <ListItem key={item.id}>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-[10px] text-surface-bright">Period {item.period}</span>
-                    <Badge variant={item.status === "approved" ? "success" : "warning"}>{item.status}</Badge>
-                  </div>
-                </ListItem>
-              ))}
+    <div className="w-full">
+      <Link
+        to="/projects"
+        className="mb-5 inline-flex items-center gap-1.5 text-[13px] font-medium text-gray-500 transition hover:text-primary"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back to projects
+      </Link>
+
+      <div className="relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm">
+        <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-br from-primary/10 via-info/5 to-transparent" />
+        <div className="relative border-b border-gray-100 px-5 pt-5 sm:px-7">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0 pb-1">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-semibold tracking-wide text-primary">
+                  {project?.project_no ?? "—"}
+                </span>
+                {project ? (
+                  <Badge
+                    variant={
+                      project.status === "active"
+                        ? "success"
+                        : project.status === "on_hold"
+                          ? "warning"
+                          : project.status === "cancelled"
+                            ? "danger"
+                            : "info"
+                    }
+                    format
+                  >
+                    {project.status}
+                  </Badge>
+                ) : null}
+              </div>
+              <h1 className="font-display text-2xl font-semibold tracking-tight text-gray-900 sm:text-[28px]">
+                {project?.name ?? "Project"}
+              </h1>
+              <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
+                <span className="inline-flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5 text-primary/70" />
+                  {project?.client_name ?? "—"}
+                </span>
+                {project?.customer_name ? (
+                  <>
+                    <span className="text-gray-300">·</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5 text-success/80" />
+                      {project.customer_name}
+                    </span>
+                  </>
+                ) : null}
+              </p>
+            </div>
+
+            <nav className="-mb-px flex gap-1 overflow-x-auto pb-px" aria-label="Project sections">
+              {tabs.map((tab) => {
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-t-lg border-b-2 px-3.5 py-2.5 text-sm font-medium transition-colors ${
+                      active
+                        ? "border-primary bg-primary/[0.04] text-primary"
+                        : "border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+                    }`}
+                  >
+                    {tab.label}
+                    {"count" in tab && tab.count !== undefined ? (
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                          active ? "bg-primary text-white" : "bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </nav>
           </div>
-        </Card>
-        <Card className="px-5 py-4">
-          <SectionTitle>Tickets</SectionTitle>
-          <div className="grid gap-3">
-            {(tickets.data ?? [])
-              .filter((item) => item.project_id === projectId)
-              .slice(0, 5)
-              .map((item) => (
-                <ListItem key={item.id}>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-bold text-surface-bright">{item.title}</span>
-                    <Badge variant={priorityVariant(item.priority)}>{item.priority}</Badge>
-                  </div>
-                </ListItem>
-              ))}
-          </div>
-        </Card>
         </div>
-      <Card className="px-5 py-4">
-        <SectionTitle>Calendar</SectionTitle>
-        <div className="grid gap-3">
-          {(events.data ?? [])
-            .filter((item) => item.id)
-            .slice(0, 5)
-            .map((item) => (
-              <ListItem key={item.id}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-surface-bright">{item.title}</span>
-                  <span className="font-mono text-[10px] text-on-surface-variant">{formatDate(item.due_date)}</span>
+
+        <div className="px-5 py-6 sm:px-7">
+        {activeTab === "details" ? (
+          <div className="space-y-8">
+            <section>
+              <div className="mb-4 flex items-center gap-2">
+                <span className="h-4 w-1 rounded-full bg-primary" />
+                <h2 className="text-sm font-semibold text-gray-900">Overview</h2>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { label: "Project No", value: project?.project_no, mono: true },
+                  { label: "Project name", value: project?.name },
+                  { label: "Status", value: project?.status ? formatLabel(project.status) : null },
+                  { label: "Client company", value: project?.client_name },
+                  { label: "Customer name", value: project?.customer_name },
+                  { label: "Company address", value: project?.company_address },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-xl border border-gray-100 bg-gray-50/70 px-3.5 py-3"
+                  >
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{item.label}</p>
+                    <p className={`mt-1 text-sm font-medium text-gray-900 ${item.mono ? "font-mono" : ""}`}>
+                      {item.value?.trim() ? item.value : "—"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {project?.details ? (
+                <div className="mt-3 rounded-xl border border-gray-100 bg-gradient-to-br from-primary/[0.03] to-transparent px-4 py-3.5">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-primary/70">Details</p>
+                  <p className="mt-1.5 text-sm leading-6 text-gray-700 whitespace-pre-wrap">{project.details}</p>
                 </div>
-              </ListItem>
-            ))}
+              ) : null}
+            </section>
+
+            <section>
+              <div className="mb-4 flex items-center gap-2">
+                <span className="h-4 w-1 rounded-full bg-success" />
+                <h2 className="text-sm font-semibold text-gray-900">Team</h2>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                  <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">Team lead</p>
+                  {teamLead ? (
+                    <div className="flex items-center gap-3">
+                      <UserAvatar name={teamLead.name} size="md" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-gray-900">{teamLead.name}</p>
+                        <p className="truncate text-xs text-gray-500">{teamLead.designation || teamLead.email}</p>
+                        <span className="mt-1 inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                          Lead
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400">Unassigned</p>
+                  )}
+                </div>
+                <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                  <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                    Members ({members.length})
+                  </p>
+                  {members.length === 0 ? (
+                    <p className="text-sm text-gray-400">No members assigned</p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {members.map((member) => (
+                        <div key={member.id} className="flex items-center gap-3">
+                          <UserAvatar name={member.name} />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-gray-900">{member.name}</p>
+                            <p className="truncate text-xs text-gray-500">{member.designation || member.email}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-4 flex items-center gap-2">
+                <span className="h-4 w-1 rounded-full bg-info" />
+                <h2 className="text-sm font-semibold text-gray-900">Contact persons</h2>
+              </div>
+              {contacts.length === 0 ? (
+                <p className="text-sm text-gray-400">No contacts added.</p>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-gray-100">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-gray-50/80">
+                      <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                        <th className="px-4 py-2.5 font-semibold">Name</th>
+                        <th className="px-4 py-2.5 font-semibold">Designation</th>
+                        <th className="px-4 py-2.5 font-semibold">Email</th>
+                        <th className="px-4 py-2.5 font-semibold">Phone</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {contacts.map((person, index) => (
+                        <tr key={`${person.name}-${index}`} className="hover:bg-gray-50/50">
+                          <td className="px-4 py-3 font-medium text-gray-900">{person.name}</td>
+                          <td className="px-4 py-3 text-gray-600">{person.designation || "—"}</td>
+                          <td className="px-4 py-3 text-gray-600">{person.email || "—"}</td>
+                          <td className="px-4 py-3 text-gray-600">{person.phone || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section>
+              <div className="mb-4 flex items-center gap-2">
+                <span className="h-4 w-1 rounded-full bg-warning" />
+                <h2 className="text-sm font-semibold text-gray-900">Documents</h2>
+              </div>
+              {documents.length === 0 ? (
+                <p className="text-sm text-gray-400">No documents uploaded.</p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {documents.map((doc) => (
+                    <button
+                      key={doc.id}
+                      type="button"
+                      onClick={() => openDocumentPreview(doc)}
+                      className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-3.5 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-primary/25 hover:bg-primary/[0.03]"
+                    >
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <FileText className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-gray-900">
+                          {doc.title || doc.filename}
+                        </span>
+                        <span className="block truncate text-xs text-gray-500">
+                          {documentCategoryLabel(doc.category)} · {doc.filename}
+                        </span>
+                      </span>
+                      <Eye className="h-4 w-4 shrink-0 text-primary/70" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        ) : null}
+
+        {activeTab === "tickets" ? <ProjectTicketsPanel projectId={projectId} /> : null}
+
+        {activeTab === "reports" ? (
+          <ProjectReportLibrary projectId={projectId} canManage={canManageReports} />
+        ) : null}
+
+        {activeTab === "calendar" ? <ProjectCalendarPanel projectId={projectId} /> : null}
+
+        {activeTab === "approvals" ? (
+          projectApprovals.length === 0 ? (
+            <p className="py-10 text-center text-sm text-gray-400">No approvals linked to this project.</p>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {projectApprovals.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="font-mono text-[11px] text-gray-500">
+                      {formatLabel(item.entity_type)} #{item.entity_id}
+                    </p>
+                    <div className="mt-1">
+                      <Badge variant={approvalVariant(item.status)} pulse={item.status === "pending"} format>
+                        {item.status}
+                      </Badge>
+                    </div>
+                  </div>
+                  {item.status === "pending" ? (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={approvalMutation.isPending}
+                        onClick={() => approvalMutation.mutate({ id: item.id, approved: false })}
+                      >
+                        Reject
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={approvalMutation.isPending}
+                        onClick={() => approvalMutation.mutate({ id: item.id, approved: true })}
+                      >
+                        Approve
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )
+        ) : null}
         </div>
-      </Card>
       </div>
+
+      <Backdrop
+        isOpen={Boolean(previewDoc)}
+        onOpenChange={(open) => (!open ? closeDocumentPreview() : null)}
+      >
+        <Modal>
+          <div
+            className="fixed left-1/2 top-1/2 flex h-[min(90vh,880px)] w-full max-w-5xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none max-sm:max-w-[calc(100%-1.5rem)]"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-semibold text-gray-900">{previewDoc?.title}</h2>
+                <p className="truncate text-xs text-gray-500">{previewDoc?.filename}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {previewDoc ? (
+                  <a
+                    href={previewDoc.blobUrl}
+                    download={previewDoc.filename}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={closeDocumentPreview}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100"
+                  aria-label="Close preview"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 bg-gray-100 p-3">
+              {previewDoc && isPreviewableDocument(previewDoc.contentType, previewDoc.filename) ? (
+                previewDoc.contentType?.startsWith("image/") ||
+                /\.(png|jpe?g|gif|webp|bmp)$/i.test(previewDoc.filename) ? (
+                  <div className="flex h-full items-center justify-center overflow-auto rounded-lg bg-white p-4">
+                    <img
+                      src={previewDoc.blobUrl}
+                      alt={previewDoc.filename}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <iframe
+                    title={previewDoc.filename}
+                    src={previewDoc.blobUrl}
+                    className="h-full w-full rounded-lg border border-gray-200 bg-white"
+                  />
+                )
+              ) : previewDoc ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-white p-8 text-center">
+                  <FileText className="h-10 w-10 text-primary" />
+                  <p className="text-sm text-gray-700">
+                    Preview is not available for this file type. Download it to open locally.
+                  </p>
+                  <a
+                    href={previewDoc.blobUrl}
+                    download={previewDoc.filename}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download {previewDoc.filename}
+                  </a>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </Modal>
+      </Backdrop>
+    </div>
+  );
+}
+
+function DetailItem({
+  label,
+  value,
+  mono,
+  multiline,
+  className,
+}: {
+  label: string;
+  value?: string | null;
+  mono?: boolean;
+  multiline?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+      <p
+        className={`text-sm text-gray-900 ${mono ? "font-mono" : ""} ${multiline ? "whitespace-pre-wrap leading-6" : ""}`}
+      >
+        {value?.trim() ? value : "—"}
+      </p>
     </div>
   );
 }
@@ -1009,26 +1617,52 @@ export function TicketsPage() {
   const projects = useProjects();
   const form = useForm<z.infer<typeof ticketSchema>>({
     resolver: zodResolver(ticketSchema),
-    defaultValues: { category: "incident", priority: "P2" },
-  });
-
-  const mutation = useMutation({
-    mutationFn: (values: z.infer<typeof ticketSchema>) => api.post("/tickets", values),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["tickets"] });
-      form.reset({ category: "incident", priority: "P2", title: "", description: "" });
+    defaultValues: {
+      issue_type: "application_crash",
+      priority: "P2",
+      source: "manual",
     },
   });
 
-  const columns: Array<TicketRow["status"]> = ["open", "in_progress", "resolved", "closed"];
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof ticketSchema>) =>
+      api.post("/tickets", {
+        ...values,
+        category: "incident",
+        reported_on: values.reported_on ? new Date(values.reported_on).toISOString() : undefined,
+        details: values.details?.trim() || undefined,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      form.reset({
+        issue_type: "application_crash",
+        priority: "P2",
+        source: "manual",
+        title: "",
+        description: "",
+        details: "",
+        reported_on: "",
+      });
+      toast.success("Ticket raised");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const columns: Array<TicketRow["status"]> = [
+    "open",
+    "in_progress",
+    "in_review",
+    "resolved",
+    "closed",
+  ];
 
   return (
     <div>
       <PageHeader title="Tickets" description="Operational issue tracking with table and board visibility." />
       <div className="grid gap-6 lg:grid-cols-[minmax(280px,360px)_1fr] lg:items-start">
-        <FormPanel title="Raise ticket" description="Log a new operational issue.">
+        <FormPanel title="Raise ticket" description="Log a maintenance issue from email complaints or manual intake.">
           <form className="grid gap-4" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
-            <Field label="Project ID" error={form.formState.errors.project_id?.message}>
+            <Field label="Project" error={form.formState.errors.project_id?.message}>
               <Input list="project-list" {...form.register("project_id")} />
               <datalist id="project-list">
                 {(projects.data ?? []).map((project) => (
@@ -1036,8 +1670,15 @@ export function TicketsPage() {
                 ))}
               </datalist>
             </Field>
-            <Field label="Title" error={form.formState.errors.title?.message}>
-              <Input {...form.register("title")} />
+            <Field label="Issue" error={form.formState.errors.title?.message}>
+              <Input {...form.register("title")} placeholder="Short issue title" />
+            </Field>
+            <Field label="Issue type" error={form.formState.errors.issue_type?.message}>
+              <Select {...form.register("issue_type")}>
+                {TICKET_ISSUE_TYPES.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
             </Field>
             <Field label="Priority" error={form.formState.errors.priority?.message}>
               <Select {...form.register("priority")}>
@@ -1046,17 +1687,24 @@ export function TicketsPage() {
                 <option value="P3">P3</option>
               </Select>
             </Field>
-            <Field label="Category" error={form.formState.errors.category?.message}>
-              <Select {...form.register("category")}>
-                {ticketSchema.shape.category.options.map((option) => (
-                  <option key={option} value={option}>{formatLabel(option)}</option>
-                ))}
+            <Field label="Source" error={form.formState.errors.source?.message}>
+              <Select {...form.register("source")}>
+                <option value="manual">Manual entry</option>
+                <option value="email">Email complaint</option>
               </Select>
             </Field>
-            <Field label="Description" error={form.formState.errors.description?.message}>
-              <Textarea {...form.register("description")} />
+            <Field label="Reported on" error={form.formState.errors.reported_on?.message}>
+              <Input type="datetime-local" {...form.register("reported_on")} />
             </Field>
-            <Button type="submit" className="w-full">Raise ticket</Button>
+            <Field label="Description" error={form.formState.errors.description?.message}>
+              <Textarea {...form.register("description")} placeholder="What happened?" />
+            </Field>
+            <Field label="Additional details" error={form.formState.errors.details?.message}>
+              <Textarea {...form.register("details")} placeholder="Environment, URLs, error messages…" />
+            </Field>
+            <Button type="submit" className="w-full" disabled={mutation.isPending}>
+              {mutation.isPending ? "Raising…" : "Raise ticket"}
+            </Button>
           </form>
         </FormPanel>
         <div className="space-y-4">
@@ -1066,9 +1714,10 @@ export function TicketsPage() {
                 <TableHead>
                   <TableHeaderRow>
                     <TableHeaderCell>Ticket</TableHeaderCell>
+                    <TableHeaderCell>Type</TableHeaderCell>
                     <TableHeaderCell>Priority</TableHeaderCell>
                     <TableHeaderCell>Status</TableHeaderCell>
-                    <TableHeaderCell>Created</TableHeaderCell>
+                    <TableHeaderCell>Reported</TableHeaderCell>
                   </TableHeaderRow>
                 </TableHead>
                 <TableBody>
@@ -1076,9 +1725,10 @@ export function TicketsPage() {
                     <TableRow key={item.id}>
                       <TableCell>
                         <Link className="font-medium text-surface-bright hover:text-primary" to={`/tickets/${item.id}`}>
-                          {item.title}
+                          #{item.ticket_number ?? item.id} · {item.title}
                         </Link>
                       </TableCell>
+                      <TableCell muted>{issueTypeLabelFromValue(item.issue_type)}</TableCell>
                       <TableCell>
                         <Badge variant={priorityVariant(item.priority)}>{item.priority}</Badge>
                       </TableCell>
@@ -1087,7 +1737,7 @@ export function TicketsPage() {
                           {item.status}
                         </Badge>
                       </TableCell>
-                      <TableCell mono>{formatDate(item.created_at)}</TableCell>
+                      <TableCell mono>{formatDate(item.reported_on ?? item.created_at)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1124,54 +1774,18 @@ export function TicketsPage() {
 export function TicketDetailPage() {
   const { id } = useParams();
   const ticketId = Number(id);
-  const queryClient = useQueryClient();
   const ticket = useQuery({
     queryKey: ["ticket", ticketId],
     queryFn: () => api.get<TicketRow>(`/tickets/${ticketId}`),
-  });
-  const comments = useQuery({
-    queryKey: ["comments", ticketId],
-    queryFn: () => api.get<Array<{ id: number; comment: string; created_at: string }>>(`/tickets/${ticketId}/comments`),
-  });
-
-  const commentForm = useForm<{ comment: string }>({ defaultValues: { comment: "" } });
-  const commentMutation = useMutation({
-    mutationFn: (values: { comment: string }) => api.post(`/tickets/${ticketId}/comments`, values),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["comments", ticketId] });
-      commentForm.reset();
-    },
   });
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title={ticket.data?.title ?? "Ticket Detail"}
-        description={ticket.data?.description ?? "Ticket timeline and RCA flow."}
+        title={ticket.data ? `Ticket #${ticket.data.ticket_number ?? ticket.data.id}` : "Ticket detail"}
+        description="Maintenance issue tracking with conversation, resolution, attachments, and history."
       />
-      <div className="grid gap-4 lg:grid-cols-[1.2fr_360px]">
-        <Card className="px-6 py-5">
-          <SectionTitle>Comments</SectionTitle>
-          <div className="grid gap-3">
-            {(comments.data ?? []).map((item) => (
-              <ListItem key={item.id}>
-                <p className="text-sm text-surface-bright">{item.comment}</p>
-                <p className="mt-2 font-mono text-[10px] text-on-surface-variant">{formatDate(item.created_at)}</p>
-              </ListItem>
-            ))}
-          </div>
-          <form className="mt-4 grid gap-3" onSubmit={commentForm.handleSubmit((values) => commentMutation.mutate(values))}>
-            <Textarea {...commentForm.register("comment")} />
-            <Button type="submit">Add Comment</Button>
-          </form>
-        </Card>
-        <Card className="px-6 py-5">
-          <SectionTitle>RCA</SectionTitle>
-          <p className="text-sm text-on-surface-variant">
-            RCA submissions are handled from the API and approvals queue in this first pass.
-          </p>
-        </Card>
-      </div>
+      <TicketDetailPanel ticketId={ticketId} />
     </div>
   );
 }
@@ -1213,6 +1827,10 @@ export function CalendarPage() {
             </Field>
             <Field label="Type" error={form.formState.errors.type?.message}>
               <Select {...form.register("type")}>
+                <option value="meeting">Meeting</option>
+                <option value="milestone">Milestone</option>
+                <option value="deadline">Deadline</option>
+                <option value="update">Update / Tracking</option>
                 <option value="custom">Custom</option>
                 <option value="health_check">Health Check</option>
                 <option value="db_restoration">DB Restoration</option>
@@ -1236,13 +1854,15 @@ export function CalendarPage() {
             events={(events.data ?? []).map((event) => ({
               id: String(event.id),
               title: event.title,
-              date: event.due_date,
+              start: event.start_at || event.due_date,
+              end: event.end_at || event.due_date,
               color:
-                event.status === "overdue"
+                event.color ||
+                (event.status === "overdue"
                   ? "#ef4444"
                   : event.type === "custom"
                     ? "#0284c7"
-                    : "#34d399",
+                    : "#34d399"),
             }))}
           />
         </Card>
@@ -1666,7 +2286,21 @@ export function AdminProjectsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
-  const [amcFile, setAmcFile] = useState<File | null>(null);
+  const [pendingDocs, setPendingDocs] = useState<PendingProjectDocument[]>([]);
+  const [docCategory, setDocCategory] = useState<ProjectDocumentCategory>("amc_terms");
+  const [docTitle, setDocTitle] = useState("");
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<{
+    title: string;
+    filename: string;
+    contentType: string | null;
+    blobUrl: string;
+  } | null>(null);
+  const [docsModal, setDocsModal] = useState<{
+    projectId: number;
+    projectName: string;
+    documents: ProjectDocument[];
+  } | null>(null);
 
   const form = useForm<z.infer<typeof projectSchema>>({
     resolver: zodResolver(projectSchema),
@@ -1710,7 +2344,10 @@ export function AdminProjectsPage() {
       member_ids: [],
       contact_persons: [{ name: "", designation: "", email: "", phone: "" }],
     });
-    setAmcFile(null);
+    setPendingDocs([]);
+    setDocCategory("amc_terms");
+    setDocTitle("");
+    setDocFile(null);
     setEditingProject(null);
   }
 
@@ -1742,7 +2379,10 @@ export function AdminProjectsPage() {
             }))
           : [{ name: "", designation: "", email: "", phone: "" }],
     });
-    setAmcFile(null);
+    setPendingDocs([]);
+    setDocCategory("amc_terms");
+    setDocTitle("");
+    setDocFile(null);
     setFormOpen(true);
   }
 
@@ -1783,18 +2423,30 @@ export function AdminProjectsPage() {
       data.append("team_lead_id", "");
     }
     data.append("member_ids", JSON.stringify(memberIds));
-    data.append(
-      "contact_persons",
-      JSON.stringify(contactPersons),
-    );
-    if (amcFile) {
-      data.append("amc_terms", amcFile);
-    }
+    data.append("contact_persons", JSON.stringify(contactPersons));
     return data;
   }
 
+  async function uploadPendingDocuments(projectId: number) {
+    for (const pending of pendingDocs) {
+      const data = new FormData();
+      data.append("category", pending.category);
+      if (pending.title.trim()) {
+        data.append("title", pending.title.trim());
+      }
+      data.append("file", pending.file);
+      await api.postForm(`/projects/${projectId}/documents`, data);
+    }
+  }
+
   const createMutation = useMutation({
-    mutationFn: (values: z.infer<typeof projectSchema>) => api.postForm("/projects", buildFormData(values)),
+    mutationFn: async (values: z.infer<typeof projectSchema>) => {
+      const project = await api.postForm<Project>("/projects", buildFormData(values));
+      if (pendingDocs.length > 0) {
+        await uploadPendingDocuments(project.id);
+      }
+      return project;
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success("Project created");
@@ -1804,8 +2456,13 @@ export function AdminProjectsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, values }: { id: number; values: z.infer<typeof projectSchema> }) =>
-      api.putForm(`/projects/${id}`, buildFormData(values)),
+    mutationFn: async ({ id, values }: { id: number; values: z.infer<typeof projectSchema> }) => {
+      const project = await api.putForm<Project>(`/projects/${id}`, buildFormData(values));
+      if (pendingDocs.length > 0) {
+        await uploadPendingDocuments(id);
+      }
+      return project;
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success("Project updated");
@@ -1824,7 +2481,75 @@ export function AdminProjectsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const deleteDocumentMutation = useMutation({
+    mutationFn: ({ projectId, documentId }: { projectId: number; documentId: number }) =>
+      api.delete(`/projects/${projectId}/documents/${documentId}`),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setEditingProject((current) => {
+        if (!current || current.id !== variables.projectId) return current;
+        return {
+          ...current,
+          documents: (current.documents ?? []).filter((doc) => doc.id !== variables.documentId),
+        };
+      });
+      toast.success("Document removed");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const isSaving = createMutation.isPending || updateMutation.isPending;
+
+  function queueDocument() {
+    if (!docFile) {
+      toast.error("Choose a file to upload");
+      return;
+    }
+    setPendingDocs((current) => [
+      ...current,
+      {
+        localId: `${Date.now()}-${docFile.name}`,
+        category: docCategory,
+        title: docTitle.trim() || documentCategoryLabel(docCategory),
+        file: docFile,
+      },
+    ]);
+    setDocFile(null);
+    setDocTitle("");
+    toast.success("Document queued — save the project to upload");
+  }
+
+  async function openDocumentPreview(projectId: number, document: ProjectDocument) {
+    try {
+      const blob = await api.getBlob(`/projects/${projectId}/documents/${document.id}/content`);
+      const blobUrl = URL.createObjectURL(blob);
+      setPreviewDoc({
+        title: document.title || documentCategoryLabel(document.category),
+        filename: document.filename,
+        contentType: document.content_type || blob.type,
+        blobUrl,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to open document");
+    }
+  }
+
+  function closeDocumentPreview() {
+    setPreviewDoc((current) => {
+      if (current?.blobUrl) {
+        URL.revokeObjectURL(current.blobUrl);
+      }
+      return null;
+    });
+  }
+
+  useEffect(() => {
+    return () => {
+      if (previewDoc?.blobUrl) {
+        URL.revokeObjectURL(previewDoc.blobUrl);
+      }
+    };
+  }, [previewDoc?.blobUrl]);
 
   function onSubmit(values: z.infer<typeof projectSchema>) {
     const payload = {
@@ -1864,6 +2589,8 @@ export function AdminProjectsPage() {
     cancelled: "danger",
   };
 
+  const savedDocuments = editingProject?.documents ?? [];
+
   return (
     <div>
       <PageHeader
@@ -1888,53 +2615,62 @@ export function AdminProjectsPage() {
                   <TableHeaderCell>Client company</TableHeaderCell>
                   <TableHeaderCell>Customer</TableHeaderCell>
                   <TableHeaderCell>Status</TableHeaderCell>
-                  <TableHeaderCell>AMC terms</TableHeaderCell>
                   <TableHeaderCell className="text-right">Actions</TableHeaderCell>
                 </TableHeaderRow>
               </TableHead>
               <TableBody>
-                {(projects.data ?? []).map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell mono>{item.project_no}</TableCell>
-                    <TableCell className="font-medium text-gray-900">{item.name}</TableCell>
-                    <TableCell>{item.client_name}</TableCell>
-                    <TableCell muted={!item.customer_name}>{item.customer_name ?? "—"}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant[item.status]} format>
-                        {item.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {item.amc_terms_url ? (
-                        <a
-                          href={item.amc_terms_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                          {item.amc_terms_filename ?? "View"}
-                        </a>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <TableActions>
-                        <TableIconButton label={`Edit ${item.name}`} onClick={() => openEditForm(item)}>
-                          <Pencil className="h-4 w-4" />
-                        </TableIconButton>
-                        <TableIconButton
-                          label={`Delete ${item.name}`}
-                          variant="danger"
-                          onClick={() => setDeleteTarget({ id: item.id, name: item.name })}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </TableIconButton>
-                      </TableActions>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {(projects.data ?? []).map((item) => {
+                  const docs = item.documents ?? [];
+
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell mono>{item.project_no}</TableCell>
+                      <TableCell className="font-medium text-gray-900">{item.name}</TableCell>
+                      <TableCell>{item.client_name}</TableCell>
+                      <TableCell muted={!item.customer_name}>{item.customer_name ?? "—"}</TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant[item.status]} format>
+                          {item.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <TableActions>
+                          <button
+                            type="button"
+                            disabled={docs.length === 0}
+                            onClick={() =>
+                              setDocsModal({
+                                projectId: item.id,
+                                projectName: item.name,
+                                documents: docs,
+                              })
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                            title={docs.length === 0 ? "No documents" : `View ${docs.length} document${docs.length === 1 ? "" : "s"}`}
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            View docs
+                            {docs.length > 0 ? (
+                              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">
+                                {docs.length}
+                              </span>
+                            ) : null}
+                          </button>
+                          <TableIconButton label={`Edit ${item.name}`} onClick={() => openEditForm(item)}>
+                            <Pencil className="h-4 w-4" />
+                          </TableIconButton>
+                          <TableIconButton
+                            label={`Delete ${item.name}`}
+                            variant="danger"
+                            onClick={() => setDeleteTarget({ id: item.id, name: item.name })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </TableIconButton>
+                        </TableActions>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>
@@ -1958,21 +2694,21 @@ export function AdminProjectsPage() {
             role="dialog"
             aria-modal="true"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-primary/10 bg-primary-light px-6 py-5">
+            <div className="flex items-center justify-between gap-4 border-b border-primary/10 bg-primary-light px-5 py-3.5">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary shadow-sm">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary shadow-sm">
                   {editingProject ? (
-                    <Pencil className="h-5 w-5 text-white" />
+                    <Pencil className="h-4 w-4 text-white" />
                   ) : (
-                    <FolderKanban className="h-5 w-5 text-white" />
+                    <FolderKanban className="h-4 w-4 text-white" />
                   )}
                 </div>
                 <div>
-                  <h2 className="text-base font-semibold text-gray-900">
+                  <h2 className="text-sm font-semibold text-gray-900">
                     {editingProject ? "Edit project" : "Create project"}
                   </h2>
-                  <p className="mt-0.5 text-xs text-gray-600">
-                    Capture client details, assign team, and upload AMC terms.
+                  <p className="text-xs text-gray-600">
+                    Client details, team, contacts, and documents
                   </p>
                 </div>
               </div>
@@ -1991,103 +2727,131 @@ export function AdminProjectsPage() {
               noValidate
               onSubmit={form.handleSubmit(onSubmit, onInvalid)}
             >
-              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <FormField label="Project No" error={form.formState.errors.project_no?.message} icon={Hash}>
+              <div className="flex-1 overflow-y-auto">
+                <div className="w-full space-y-4 px-5 py-4 lg:px-8">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <FormField className="gap-1" label="Project No" error={form.formState.errors.project_no?.message} icon={Hash}>
                     <Controller
                       control={form.control}
                       name="project_no"
-                      render={({ field }) => <IconInput placeholder="PRJ-0001" {...field} />}
+                      render={({ field }) => (
+                        <IconInput className="!rounded-md !py-1.5 !pr-3 text-sm" placeholder="PRJ-0001" {...field} />
+                      )}
                     />
                   </FormField>
-                  <FormField label="Project name" error={form.formState.errors.name?.message} icon={FolderKanban}>
+                  <FormField className="gap-1" label="Project name" error={form.formState.errors.name?.message} icon={FolderKanban}>
                     <Controller
                       control={form.control}
                       name="name"
-                      render={({ field }) => <IconInput placeholder="Support engagement" {...field} />}
+                      render={({ field }) => (
+                        <IconInput className="!rounded-md !py-1.5 !pr-3 text-sm" placeholder="Support engagement" {...field} />
+                      )}
                     />
                   </FormField>
-                  <FormField label="Client company" error={form.formState.errors.client_name?.message} icon={Building2}>
+                  <FormField className="gap-1" label="Client company" error={form.formState.errors.client_name?.message} icon={Building2}>
                     <Controller
                       control={form.control}
                       name="client_name"
-                      render={({ field }) => <IconInput placeholder="Acme Corp" {...field} />}
+                      render={({ field }) => (
+                        <IconInput className="!rounded-md !py-1.5 !pr-3 text-sm" placeholder="Acme Corp" {...field} />
+                      )}
                     />
                   </FormField>
-                  <FormField label="Customer name" error={form.formState.errors.customer_name?.message} icon={User}>
+                  <FormField className="gap-1" label="Customer name" error={form.formState.errors.customer_name?.message} icon={User}>
                     <Controller
                       control={form.control}
                       name="customer_name"
-                      render={({ field }) => <IconInput placeholder="Primary customer contact" {...field} />}
+                      render={({ field }) => (
+                        <IconInput className="!rounded-md !py-1.5 !pr-3 text-sm" placeholder="Primary customer" {...field} />
+                      )}
                     />
                   </FormField>
                 </div>
 
-                <FormField label="Details" error={form.formState.errors.details?.message}>
-                  <Controller
-                    control={form.control}
-                    name="details"
-                    render={({ field }) => (
-                      <Textarea rows={3} placeholder="Scope, notes, and delivery details" {...field} />
-                    )}
-                  />
-                </FormField>
+                <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_180px]">
+                  <FormField className="gap-1" label="Details" error={form.formState.errors.details?.message}>
+                    <Controller
+                      control={form.control}
+                      name="details"
+                      render={({ field }) => (
+                        <Textarea
+                          rows={3}
+                          className="!min-h-[84px] !rounded-md !px-3 !py-2 text-sm"
+                          placeholder="Scope, notes, and delivery details"
+                          {...field}
+                        />
+                      )}
+                    />
+                  </FormField>
+                  <FormField
+                    className="gap-1"
+                    label="Company address"
+                    error={form.formState.errors.company_address?.message}
+                    icon={MapPin}
+                  >
+                    <Controller
+                      control={form.control}
+                      name="company_address"
+                      render={({ field }) => (
+                        <Textarea
+                          rows={3}
+                          className="!min-h-[84px] !rounded-md !py-2 !pr-3 text-sm"
+                          placeholder="Company address"
+                          {...field}
+                        />
+                      )}
+                    />
+                  </FormField>
+                  <FormField className="gap-1" label="Status" error={form.formState.errors.status?.message}>
+                    <Controller
+                      control={form.control}
+                      name="status"
+                      render={({ field }) => (
+                        <Select className="!rounded-md !px-3 !py-1.5 text-sm" {...field}>
+                          <option value="active">Active</option>
+                          <option value="on_hold">On hold</option>
+                          <option value="completed">Completed</option>
+                          <option value="cancelled">Cancelled</option>
+                        </Select>
+                      )}
+                    />
+                  </FormField>
+                </div>
 
-                <FormField
-                  label="Company address"
-                  error={form.formState.errors.company_address?.message}
-                  icon={MapPin}
-                >
-                  <Controller
-                    control={form.control}
-                    name="company_address"
-                    render={({ field }) => <IconInput placeholder="Full company address" {...field} />}
-                  />
-                </FormField>
+                <div className="rounded-md border border-gray-200 bg-gray-50/60 p-3">
+                  <p className="mb-2 text-sm font-semibold text-gray-900">Team assignment</p>
 
-                <FormField label="Status" error={form.formState.errors.status?.message}>
-                  <Controller
-                    control={form.control}
-                    name="status"
-                    render={({ field }) => (
-                      <Select {...field}>
-                        <option value="active">Active</option>
-                        <option value="on_hold">On hold</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                      </Select>
-                    )}
-                  />
-                </FormField>
-
-                <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4">
-                  <p className="text-sm font-semibold text-gray-900">Team assignment</p>
-                  <p className="mt-0.5 text-xs text-gray-500">
-                    Assign a team lead and one or more team members for this project.
-                  </p>
-
-                  <div className="mt-4">
-                    <FormField label="Team lead" error={form.formState.errors.team_lead_id?.message}>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <div className="grid gap-1">
+                      <div className="flex h-5 items-center justify-between">
+                        <p className="text-xs font-medium text-gray-700">Team lead</p>
+                        <span className="text-[11px] text-gray-400">
+                          {watchedLeadId ? "1 selected" : "Optional"}
+                        </span>
+                      </div>
                       <Controller
                         control={form.control}
                         name="team_lead_id"
                         render={({ field }) => (
-                          <div className="space-y-2 rounded-lg border border-gray-200 bg-white p-2">
+                          <div className="max-h-44 space-y-0.5 overflow-y-auto rounded-md border border-gray-200 bg-white p-1">
                             <label
-                              className={`flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 transition-colors ${
+                              className={`flex min-h-10 cursor-pointer items-center gap-2 rounded px-2 py-1.5 transition-colors ${
                                 !field.value ? "bg-primary-light" : "hover:bg-gray-50"
                               }`}
                             >
                               <input
                                 type="radio"
                                 name="project-team-lead"
-                                className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                                className="h-3.5 w-3.5 border-gray-300 text-primary focus:ring-primary"
                                 checked={!field.value}
                                 onChange={() => field.onChange(undefined)}
                               />
+                              <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500">
+                                —
+                              </span>
                               <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium text-gray-900">Unassigned</p>
-                                <p className="text-xs text-gray-500">No lead selected yet</p>
+                                <p className="truncate text-sm font-medium text-gray-900">Unassigned</p>
+                                <p className="truncate text-[11px] text-gray-500">No lead selected</p>
                               </div>
                             </label>
                             {leadCandidates.map((user) => {
@@ -2095,21 +2859,21 @@ export function AdminProjectsPage() {
                               return (
                                 <label
                                   key={user.id}
-                                  className={`flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 transition-colors ${
+                                  className={`flex min-h-10 cursor-pointer items-center gap-2 rounded px-2 py-1.5 transition-colors ${
                                     checked ? "bg-primary-light" : "hover:bg-gray-50"
                                   }`}
                                 >
                                   <input
                                     type="radio"
                                     name="project-team-lead"
-                                    className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                                    className="h-3.5 w-3.5 border-gray-300 text-primary focus:ring-primary"
                                     checked={checked}
                                     onChange={() => field.onChange(user.id)}
                                   />
                                   <UserAvatar name={user.name} />
                                   <div className="min-w-0 flex-1">
                                     <p className="truncate text-sm font-medium text-gray-900">{user.name}</p>
-                                    <p className="truncate text-xs text-gray-500">
+                                    <p className="truncate text-[11px] text-gray-500">
                                       {user.designation || user.email}
                                     </p>
                                   </div>
@@ -2119,77 +2883,75 @@ export function AdminProjectsPage() {
                           </div>
                         )}
                       />
-                    </FormField>
-                  </div>
-
-                  <div className="mt-4">
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-sm font-medium text-gray-700">Team members</p>
-                      <span className="text-xs text-gray-400">
-                        {watchedMemberIds.length} selected
-                      </span>
+                      {form.formState.errors.team_lead_id?.message ? (
+                        <p className="text-[11px] text-danger">{form.formState.errors.team_lead_id.message}</p>
+                      ) : null}
                     </div>
-                    <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
-                      {memberCandidates.length === 0 ? (
-                        <p className="px-2 py-3 text-sm text-gray-400">
-                          No team members available. Create users with the Team Member role first.
-                        </p>
+
+                    <div className="grid gap-1">
+                      <div className="flex h-5 items-center justify-between">
+                        <p className="text-xs font-medium text-gray-700">Team members</p>
+                        <span className="text-[11px] text-gray-400">{watchedMemberIds.length} selected</span>
+                      </div>
+                      <div className="max-h-44 space-y-0.5 overflow-y-auto rounded-md border border-gray-200 bg-white p-1">
+                        {memberCandidates.length === 0 ? (
+                          <p className="px-2 py-2 text-xs text-gray-400">No team members available.</p>
+                        ) : (
+                          memberCandidates.map((user) => {
+                            const checked = watchedMemberIds.includes(user.id);
+                            return (
+                              <label
+                                key={user.id}
+                                className={`flex min-h-10 cursor-pointer items-center gap-2 rounded px-2 py-1.5 transition-colors ${
+                                  checked ? "bg-primary-light" : "hover:bg-gray-50"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary"
+                                  checked={checked}
+                                  onChange={(event) => {
+                                    const next = event.target.checked
+                                      ? [...watchedMemberIds, user.id]
+                                      : watchedMemberIds.filter((id) => id !== user.id);
+                                    form.setValue("member_ids", next, { shouldDirty: true });
+                                  }}
+                                />
+                                <UserAvatar name={user.name} />
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-gray-900">{user.name}</p>
+                                  <p className="truncate text-[11px] text-gray-500">
+                                    {user.designation || user.email}
+                                  </p>
+                                </div>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                      {watchedLeadId ? (
+                        <p className="text-[11px] text-gray-500">Team lead is included automatically.</p>
                       ) : (
-                        memberCandidates.map((user) => {
-                          const checked = watchedMemberIds.includes(user.id);
-                          return (
-                            <label
-                              key={user.id}
-                              className={`flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 transition-colors ${
-                                checked ? "bg-primary-light" : "hover:bg-gray-50"
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                                checked={checked}
-                                onChange={(event) => {
-                                  const next = event.target.checked
-                                    ? [...watchedMemberIds, user.id]
-                                    : watchedMemberIds.filter((id) => id !== user.id);
-                                  form.setValue("member_ids", next, { shouldDirty: true });
-                                }}
-                              />
-                              <UserAvatar name={user.name} />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-medium text-gray-900">{user.name}</p>
-                                <p className="truncate text-xs text-gray-500">
-                                  {user.designation || user.email}
-                                </p>
-                              </div>
-                            </label>
-                          );
-                        })
+                        <p className="text-[11px] text-transparent">.</p>
                       )}
                     </div>
-                    {watchedLeadId ? (
-                      <p className="mt-2 text-xs text-gray-500">
-                        Team lead is included automatically in project membership.
-                      </p>
-                    ) : null}
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-3">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div>
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-baseline gap-2">
                       <p className="text-sm font-semibold text-gray-900">Contact persons</p>
-                      <p className="text-xs text-gray-500">Name, designation, email, and phone</p>
+                      <span className="text-xs text-gray-400">{contacts.fields.length}</span>
                     </div>
-                    <Button
+                    <button
                       type="button"
-                      size="sm"
-                      variant="outline"
+                      className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                       onClick={() => contacts.append({ name: "", designation: "", email: "", phone: "" })}
                     >
-                      <Plus className="h-3.5 w-3.5" />
+                      <Plus className="h-3 w-3" />
                       Add
-                    </Button>
+                    </button>
                   </div>
                   {form.formState.errors.contact_persons?.root?.message ||
                   form.formState.errors.contact_persons?.message ? (
@@ -2198,115 +2960,230 @@ export function AdminProjectsPage() {
                         form.formState.errors.contact_persons?.message}
                     </p>
                   ) : null}
-                  <div className="flex flex-col gap-3">
-                    {contacts.fields.map((field, index) => (
-                      <div key={field.id} className="rounded-md border border-gray-200 bg-white p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                            Contact {index + 1}
-                          </p>
+
+                  <div className="overflow-hidden rounded-md border border-gray-200">
+                    <div className="hidden grid-cols-[28px_1.1fr_1fr_1.2fr_1fr_28px] gap-2 border-b border-gray-100 bg-gray-50 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 sm:grid">
+                      <span>#</span>
+                      <span>Name</span>
+                      <span>Designation</span>
+                      <span>Email</span>
+                      <span>Phone</span>
+                      <span />
+                    </div>
+                    <div className="divide-y divide-gray-100 bg-white">
+                      {contacts.fields.map((field, index) => (
+                        <div
+                          key={field.id}
+                          className="grid grid-cols-1 gap-2 px-2.5 py-2 sm:grid-cols-[28px_1.1fr_1fr_1.2fr_1fr_28px] sm:items-start"
+                        >
+                          <span className="hidden pt-2 text-xs text-gray-400 sm:block">{index + 1}</span>
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.name`}
+                            render={({ field: f }) => (
+                              <div>
+                                <IconInput className="!rounded-md !px-2.5 !py-1.5 text-sm" placeholder="Name" {...f} />
+                                {form.formState.errors.contact_persons?.[index]?.name?.message ? (
+                                  <p className="mt-0.5 text-[11px] text-danger">
+                                    {form.formState.errors.contact_persons?.[index]?.name?.message}
+                                  </p>
+                                ) : null}
+                              </div>
+                            )}
+                          />
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.designation`}
+                            render={({ field: f }) => (
+                              <IconInput className="!rounded-md !px-2.5 !py-1.5 text-sm" placeholder="Designation" {...f} />
+                            )}
+                          />
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.email`}
+                            render={({ field: f }) => (
+                              <div>
+                                <IconInput
+                                  className="!rounded-md !px-2.5 !py-1.5 text-sm"
+                                  type="text"
+                                  inputMode="email"
+                                  placeholder="Email"
+                                  {...f}
+                                />
+                                {form.formState.errors.contact_persons?.[index]?.email?.message ? (
+                                  <p className="mt-0.5 text-[11px] text-danger">
+                                    {form.formState.errors.contact_persons?.[index]?.email?.message}
+                                  </p>
+                                ) : null}
+                              </div>
+                            )}
+                          />
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.phone`}
+                            render={({ field: f }) => (
+                              <IconInput className="!rounded-md !px-2.5 !py-1.5 text-sm" placeholder="Phone" {...f} />
+                            )}
+                          />
                           {contacts.fields.length > 1 ? (
                             <button
                               type="button"
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-danger-light hover:text-danger"
+                              className="inline-flex h-8 w-8 items-center justify-center justify-self-end rounded-md text-gray-400 hover:bg-danger-light hover:text-danger sm:justify-self-center"
                               onClick={() => contacts.remove(index)}
                               aria-label={`Remove contact ${index + 1}`}
                             >
-                              <X className="h-4 w-4" />
+                              <X className="h-3.5 w-3.5" />
                             </button>
-                          ) : null}
+                          ) : (
+                            <span className="hidden sm:block" />
+                          )}
                         </div>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <FormField
-                            label="Name"
-                            error={form.formState.errors.contact_persons?.[index]?.name?.message}
-                            icon={User}
-                          >
-                            <Controller
-                              control={form.control}
-                              name={`contact_persons.${index}.name`}
-                              render={({ field: f }) => <IconInput placeholder="Contact name" {...f} />}
-                            />
-                          </FormField>
-                          <FormField
-                            label="Designation"
-                            error={form.formState.errors.contact_persons?.[index]?.designation?.message}
-                            icon={Briefcase}
-                          >
-                            <Controller
-                              control={form.control}
-                              name={`contact_persons.${index}.designation`}
-                              render={({ field: f }) => <IconInput placeholder="Manager" {...f} />}
-                            />
-                          </FormField>
-                          <FormField
-                            label="Email"
-                            error={form.formState.errors.contact_persons?.[index]?.email?.message}
-                            icon={Mail}
-                          >
-                            <Controller
-                              control={form.control}
-                              name={`contact_persons.${index}.email`}
-                              render={({ field: f }) => (
-                                <IconInput
-                                  type="text"
-                                  inputMode="email"
-                                  placeholder="name@company.com"
-                                  {...f}
-                                />
-                              )}
-                            />
-                          </FormField>
-                          <FormField
-                            label="Phone"
-                            error={form.formState.errors.contact_persons?.[index]?.phone?.message}
-                            icon={Phone}
-                          >
-                            <Controller
-                              control={form.control}
-                              name={`contact_persons.${index}.phone`}
-                              render={({ field: f }) => <IconInput placeholder="+91 ..." {...f} />}
-                            />
-                          </FormField>
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                    AMC terms &amp; conditions document
-                  </label>
-                  <div className="flex flex-col gap-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3">
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <FileText className="h-4 w-4 text-primary" />
-                      <span>
-                        {amcFile
-                          ? amcFile.name
-                          : editingProject?.amc_terms_filename
-                            ? `Current: ${editingProject.amc_terms_filename}`
-                            : "Upload PDF or DOC (stored in MinIO)"}
+                  <div className="mb-2 flex items-baseline justify-between gap-2">
+                    <div className="flex items-baseline gap-2">
+                      <p className="text-sm font-semibold text-gray-900">Documents</p>
+                      <span className="text-xs text-gray-400">
+                        {savedDocuments.length + pendingDocs.length} file
+                        {savedDocuments.length + pendingDocs.length === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <input
-                      type="file"
-                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                      className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-primary-dark"
-                      onChange={(event) => setAmcFile(event.target.files?.[0] ?? null)}
-                    />
                   </div>
+
+                  {(savedDocuments.length > 0 || pendingDocs.length > 0) && (
+                    <div className="mb-2 overflow-hidden rounded-md border border-gray-200 bg-white">
+                      {savedDocuments.map((doc) => (
+                        <div
+                          key={doc.id}
+                          className="flex items-center gap-2 border-b border-gray-100 px-2.5 py-1.5 last:border-b-0"
+                        >
+                          <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
+                          <button
+                            type="button"
+                            onClick={() => editingProject && openDocumentPreview(editingProject.id, doc)}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <span className="block truncate text-sm font-medium text-gray-900 hover:text-primary">
+                              {doc.title || doc.filename}
+                            </span>
+                            <span className="block truncate text-[11px] text-gray-500">
+                              {documentCategoryLabel(doc.category)} · {doc.filename}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded text-primary hover:bg-primary/10"
+                            aria-label={`Preview ${doc.filename}`}
+                            onClick={() => editingProject && openDocumentPreview(editingProject.id, doc)}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded text-red-500 hover:bg-red-50"
+                            aria-label={`Remove ${doc.filename}`}
+                            disabled={deleteDocumentMutation.isPending}
+                            onClick={() =>
+                              editingProject &&
+                              deleteDocumentMutation.mutate({
+                                projectId: editingProject.id,
+                                documentId: doc.id,
+                              })
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {pendingDocs.map((doc) => (
+                        <div
+                          key={doc.localId}
+                          className="flex items-center gap-2 border-b border-dashed border-primary/20 bg-primary/[0.03] px-2.5 py-1.5 last:border-b-0"
+                        >
+                          <Upload className="h-3.5 w-3.5 shrink-0 text-primary" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-gray-900">{doc.title}</p>
+                            <p className="truncate text-[11px] text-gray-500">
+                              Queued · {documentCategoryLabel(doc.category)} · {doc.file.name}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:bg-white hover:text-gray-700"
+                            aria-label={`Remove queued ${doc.file.name}`}
+                            onClick={() =>
+                              setPendingDocs((current) =>
+                                current.filter((item) => item.localId !== doc.localId),
+                              )
+                            }
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 items-end gap-2 rounded-md border border-gray-200 bg-gray-50/60 p-2 sm:grid-cols-[140px_1fr_minmax(0,1.2fr)_auto]">
+                    <div className="grid gap-1">
+                      <label className="text-[11px] font-medium text-gray-600">Category</label>
+                      <Select
+                        className="!rounded-md !px-2.5 !py-1.5 text-sm"
+                        value={docCategory}
+                        onChange={(event) =>
+                          setDocCategory(event.target.value as ProjectDocumentCategory)
+                        }
+                      >
+                        {DOCUMENT_CATEGORIES.map((category) => (
+                          <option key={category.value} value={category.value}>
+                            {category.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div className="grid gap-1">
+                      <label className="text-[11px] font-medium text-gray-600">Title</label>
+                      <IconInput
+                        className="!rounded-md !px-2.5 !py-1.5 text-sm"
+                        placeholder={documentCategoryLabel(docCategory)}
+                        value={docTitle}
+                        onChange={(value) => setDocTitle(String(value))}
+                      />
+                    </div>
+                    <div className="grid gap-1">
+                      <label className="text-[11px] font-medium text-gray-600">File</label>
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
+                        className="block w-full text-xs text-gray-600 file:mr-2 file:rounded file:border-0 file:bg-primary file:px-2.5 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-primary-dark"
+                        onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={queueDocument}
+                      className="inline-flex h-[34px] items-center justify-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-white hover:bg-primary-dark"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add
+                    </button>
+                  </div>
+                </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 border-t border-gray-100 bg-gray-50 px-6 py-4">
-                <Button variant="outline" onClick={closeForm}>
+              <div className="flex items-center justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3">
+                <Button variant="outline" size="sm" onClick={closeForm}>
                   Cancel
                 </Button>
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:bg-primary-dark focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-dark focus:outline-none focus:ring-4 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSaving ? "Saving..." : editingProject ? "Save changes" : "Create project"}
                 </button>
@@ -2315,6 +3192,139 @@ export function AdminProjectsPage() {
           </motion.aside>
         </div>
       ) : null}
+
+      <Backdrop
+        isOpen={Boolean(docsModal)}
+        onOpenChange={(open) => (!open ? setDocsModal(null) : null)}
+      >
+        <Modal>
+          <div
+            className="fixed left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none max-sm:max-w-[calc(100%-1.5rem)]"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-gray-900">Project documents</h2>
+                <p className="truncate text-xs text-gray-500">{docsModal?.projectName}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDocsModal(null)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100"
+                aria-label="Close documents"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto p-3">
+              {(docsModal?.documents.length ?? 0) === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-gray-400">No documents uploaded.</p>
+              ) : (
+                <div className="space-y-1">
+                  {docsModal?.documents.map((doc) => (
+                    <button
+                      key={doc.id}
+                      type="button"
+                      onClick={() => docsModal && openDocumentPreview(docsModal.projectId, doc)}
+                      className="flex w-full items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left transition hover:border-gray-200 hover:bg-gray-50"
+                    >
+                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <FileText className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-gray-900">
+                          {doc.title || doc.filename}
+                        </span>
+                        <span className="block truncate text-xs text-gray-500">
+                          {documentCategoryLabel(doc.category)} · {doc.filename}
+                        </span>
+                      </span>
+                      <Eye className="h-4 w-4 shrink-0 text-gray-400" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </Modal>
+      </Backdrop>
+
+      <Backdrop
+        isOpen={Boolean(previewDoc)}
+        onOpenChange={(open) => (!open ? closeDocumentPreview() : null)}
+      >
+        <Modal>
+          <div
+            className="fixed left-1/2 top-1/2 flex h-[min(90vh,880px)] w-full max-w-5xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none max-sm:max-w-[calc(100%-1.5rem)]"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-semibold text-gray-900">{previewDoc?.title}</h2>
+                <p className="truncate text-xs text-gray-500">{previewDoc?.filename}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {previewDoc ? (
+                  <a
+                    href={previewDoc.blobUrl}
+                    download={previewDoc.filename}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={closeDocumentPreview}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100"
+                  aria-label="Close preview"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 bg-gray-100 p-3">
+              {previewDoc &&
+              isPreviewableDocument(previewDoc.contentType, previewDoc.filename) ? (
+                previewDoc.contentType?.startsWith("image/") ||
+                /\.(png|jpe?g|gif|webp|bmp)$/i.test(previewDoc.filename) ? (
+                  <div className="flex h-full items-center justify-center overflow-auto rounded-lg bg-white p-4">
+                    <img
+                      src={previewDoc.blobUrl}
+                      alt={previewDoc.filename}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <iframe
+                    title={previewDoc.filename}
+                    src={previewDoc.blobUrl}
+                    className="h-full w-full rounded-lg border border-gray-200 bg-white"
+                  />
+                )
+              ) : previewDoc ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-white p-8 text-center">
+                  <FileText className="h-10 w-10 text-primary" />
+                  <p className="text-sm text-gray-700">
+                    Preview is not available for this file type. Download it to open locally.
+                  </p>
+                  <a
+                    href={previewDoc.blobUrl}
+                    download={previewDoc.filename}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download {previewDoc.filename}
+                  </a>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </Modal>
+      </Backdrop>
 
       <Backdrop
         isOpen={Boolean(deleteTarget)}

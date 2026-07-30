@@ -2,16 +2,13 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Bell,
-  CalendarDays,
   ChevronDown,
   ClipboardList,
   FolderKanban,
   LayoutDashboard,
   LogOut,
   Moon,
-  ShieldCheck,
   Sun,
-  Ticket,
   Users,
 } from "lucide-react";
 import { Toaster } from "sonner";
@@ -42,10 +39,6 @@ const queryClient = new QueryClient();
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/projects", label: "Projects", icon: FolderKanban },
-  { to: "/reports", label: "Reports", icon: ClipboardList },
-  { to: "/tickets", label: "Tickets", icon: Ticket },
-  { to: "/calendar", label: "Calendar", icon: CalendarDays },
-  { to: "/approvals", label: "Approvals", icon: ShieldCheck },
 ];
 
 const adminItems = [

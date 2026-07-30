@@ -69,8 +69,30 @@ class TicketPriority(StrEnum):
 class TicketStatus(StrEnum):
     OPEN = "open"
     IN_PROGRESS = "in_progress"
+    IN_REVIEW = "in_review"
     RESOLVED = "resolved"
     CLOSED = "closed"
+
+
+class TicketIssueType(StrEnum):
+    APPLICATION_CRASH = "application_crash"
+    SERVICE_INTERRUPTION = "service_interruption"
+    EL_IMAGE_RETRIEVAL_FAILURE = "el_image_retrieval_failure"
+    SLOW_IMAGE_LOADING = "slow_image_loading"
+    DATABASE_ISSUE = "database_issue"
+    INTEGRATION_ISSUE = "integration_issue"
+    ACCESS_FUNCTIONAL_ISSUE = "access_functional_issue"
+    AUTHENTICATION_AUTHORIZATION_ISSUE = "authentication_authorization_issue"
+    UI_FUNCTIONALITY_ERROR = "ui_functionality_error"
+    DATA_CORRUPTION = "data_corruption"
+    DB_INDEXING_PROBLEM = "db_indexing_problem"
+    FILE_STORAGE_ISSUE = "file_storage_issue"
+    NETWORK_RELATED_ISSUE = "network_related_issue"
+
+
+class TicketSource(StrEnum):
+    EMAIL = "email"
+    MANUAL = "manual"
 
 
 class TicketCategory(StrEnum):
@@ -95,13 +117,19 @@ class CalendarEventType(StrEnum):
     HEALTH_CHECK = "health_check"
     DB_RESTORATION = "db_restoration"
     REPORT_DUE = "report_due"
+    MEETING = "meeting"
+    MILESTONE = "milestone"
+    DEADLINE = "deadline"
+    UPDATE = "update"
     CUSTOM = "custom"
 
 
 class CalendarEventStatus(StrEnum):
     SCHEDULED = "scheduled"
+    IN_PROGRESS = "in_progress"
     DONE = "done"
     OVERDUE = "overdue"
+    CANCELLED = "cancelled"
 
 
 class ApprovalStatus(StrEnum):
@@ -115,6 +143,15 @@ class ProjectStatus(StrEnum):
     ON_HOLD = "on_hold"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+
+
+class ProjectDocumentCategory(StrEnum):
+    AMC_TERMS = "amc_terms"
+    SOW = "sow"
+    CONTRACT = "contract"
+    TECHNICAL = "technical"
+    INVOICE = "invoice"
+    OTHER = "other"
 
 
 class User(Base):
@@ -168,6 +205,23 @@ class ProjectMember(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
 
+class ProjectDocument(Base):
+    __tablename__ = "project_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    category: Mapped[ProjectDocumentCategory] = mapped_column(
+        enum_column(ProjectDocumentCategory), nullable=False
+    )
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ReportTemplate(Base):
     __tablename__ = "report_templates"
 
@@ -200,6 +254,52 @@ class ReportSubmission(Base):
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     comments: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ProjectReportType(Base):
+    """Project-scoped report category with optional template and cadence."""
+
+    __tablename__ = "project_report_types"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_project_report_type_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    frequency_interval: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frequency_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    template_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    template_object_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    template_content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ProjectReportDocument(Base):
+    """Completed report file stored under a report type / period folder."""
+
+    __tablename__ = "project_report_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    report_type_id: Mapped[int] = mapped_column(ForeignKey("project_report_types.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    period_label: Mapped[str] = mapped_column(String(120), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -266,9 +366,13 @@ class Ticket(Base):
     __tablename__ = "tickets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticket_number: Mapped[str | None] = mapped_column(String(4), unique=True, index=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
     category: Mapped[TicketCategory] = mapped_column(
         enum_column(TicketCategory), nullable=False
+    )
+    issue_type: Mapped[TicketIssueType | None] = mapped_column(
+        enum_column(TicketIssueType), nullable=True
     )
     priority: Mapped[TicketPriority] = mapped_column(
         enum_column(TicketPriority), nullable=False
@@ -278,9 +382,17 @@ class Ticket(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[TicketSource] = mapped_column(
+        enum_column(TicketSource), default=TicketSource.MANUAL, nullable=False
+    )
+    reported_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     raised_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_steps: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -295,6 +407,34 @@ class TicketComment(Base):
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     comment: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TicketAttachment(Base):
+    __tablename__ = "ticket_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TicketHistory(Base):
+    __tablename__ = "ticket_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -315,15 +455,37 @@ class RCADocument(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class CalendarEventTypeConfig(Base):
+    __tablename__ = "calendar_event_types"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_calendar_event_type_project_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    color: Mapped[str] = mapped_column(String(32), nullable=False, default="#3758F9")
+    # e.g. interval=3, unit=month → once every 3 months. Null interval = one-time / as needed.
+    frequency_interval: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frequency_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class CalendarEvent(Base):
     __tablename__ = "calendar_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
-    type: Mapped[CalendarEventType] = mapped_column(
-        enum_column(CalendarEventType), nullable=False
+    # Free-form label matching a configured project event type name (or legacy enum value).
+    type: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("calendar_event_types.id"), nullable=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Kept in sync with end_at for older list/overdue queries.
     due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     status: Mapped[CalendarEventStatus] = mapped_column(
@@ -331,7 +493,19 @@ class CalendarEvent(Base):
         default=CalendarEventStatus.SCHEDULED,
         nullable=False,
     )
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    meeting_link: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_milestone: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    updates: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    milestones: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    final_reports: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     recurrence_rule: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class Approval(Base):

@@ -7,7 +7,6 @@ from app.models.entities import (
     ApprovalStatus,
     BackupStatus,
     CalendarEventStatus,
-    CalendarEventType,
     DrillOutcome,
     ProjectStatus,
     RCAStatus,
@@ -15,7 +14,9 @@ from app.models.entities import (
     RoleEnum,
     SubmissionStatus,
     TicketCategory,
+    TicketIssueType,
     TicketPriority,
+    TicketSource,
     TicketStatus,
 )
 
@@ -76,6 +77,14 @@ class ContactPerson(BaseModel):
     phone: str | None = None
 
 
+class ProjectUserSummary(ORMModel):
+    id: int
+    name: str
+    email: str
+    designation: str | None = None
+    role: RoleEnum
+
+
 class ProjectBase(BaseModel):
     project_no: str
     name: str
@@ -114,6 +123,18 @@ class ProjectUpdate(BaseModel):
     amc_terms_filename: str | None = None
 
 
+class ProjectDocumentRead(ORMModel):
+    id: int
+    project_id: int
+    category: str
+    title: str | None = None
+    filename: str
+    object_key: str
+    content_type: str | None = None
+    url: str | None = None
+    created_at: datetime
+
+
 class ProjectRead(ORMModel):
     id: int
     project_no: str
@@ -128,11 +149,14 @@ class ProjectRead(ORMModel):
     amc_terms_filename: str | None = None
     amc_terms_url: str | None = None
     team_lead_id: int | None
+    team_lead: ProjectUserSummary | None = None
     backup_policy_json: dict[str, Any]
     rto_target: str | None
     rpo_target: str | None
     created_at: datetime
     member_ids: list[int] = []
+    members: list[ProjectUserSummary] = []
+    documents: list[ProjectDocumentRead] = []
 
 
 class TemplateBase(BaseModel):
@@ -263,10 +287,14 @@ class RestorationDrillRead(RestorationDrillBase, ORMModel):
 
 class TicketBase(BaseModel):
     project_id: int
-    category: TicketCategory
+    category: TicketCategory = TicketCategory.INCIDENT
+    issue_type: TicketIssueType
     priority: TicketPriority
-    title: str
-    description: str
+    title: str = Field(min_length=2, max_length=255)
+    description: str = Field(min_length=2)
+    details: str | None = None
+    source: TicketSource = TicketSource.MANUAL
+    reported_on: datetime | None = None
     assignee_id: int | None = None
     due_date: datetime | None = None
 
@@ -277,32 +305,69 @@ class TicketCreate(TicketBase):
 
 class TicketUpdate(BaseModel):
     category: TicketCategory | None = None
+    issue_type: TicketIssueType | None = None
     priority: TicketPriority | None = None
     status: TicketStatus | None = None
     title: str | None = None
     description: str | None = None
+    details: str | None = None
+    source: TicketSource | None = None
+    reported_on: datetime | None = None
     assignee_id: int | None = None
     due_date: datetime | None = None
+    status_comment: str | None = None
+
+
+class TicketResolutionUpdate(BaseModel):
+    resolution_summary: str | None = None
+    resolution_root_cause: str | None = None
+    resolution_steps: str | None = None
 
 
 class TicketRead(TicketBase, ORMModel):
     id: int
+    ticket_number: str | None = None
     status: TicketStatus
     raised_by: int
+    resolution_summary: str | None = None
+    resolution_root_cause: str | None = None
+    resolution_steps: str | None = None
     created_at: datetime
     resolved_at: datetime | None
     closed_at: datetime | None
 
 
 class TicketCommentCreate(BaseModel):
-    comment: str
+    comment: str = Field(min_length=1)
 
 
 class TicketCommentRead(ORMModel):
     id: int
     ticket_id: int
     author_id: int
+    author_name: str | None = None
     comment: str
+    created_at: datetime
+
+
+class TicketAttachmentRead(ORMModel):
+    id: int
+    ticket_id: int
+    filename: str
+    content_type: str | None = None
+    size_bytes: int | None = None
+    uploaded_by: int
+    uploader_name: str | None = None
+    created_at: datetime
+
+
+class TicketHistoryRead(ORMModel):
+    id: int
+    ticket_id: int
+    actor_id: int | None = None
+    actor_name: str | None = None
+    action: str
+    detail: str | None = None
     created_at: datetime
 
 
@@ -324,13 +389,47 @@ class RCARead(RCABase, ORMModel):
     reviewed_at: datetime | None
 
 
+class CalendarEventTypeConfigBase(BaseModel):
+    project_id: int
+    name: str = Field(..., min_length=1, max_length=100)
+    color: str = Field(default="#3758F9", max_length=32)
+    frequency_interval: int | None = Field(default=None, ge=1)
+    frequency_unit: str | None = Field(default=None, pattern="^(day|week|month|year)$")
+
+
+class CalendarEventTypeConfigCreate(CalendarEventTypeConfigBase):
+    pass
+
+
+class CalendarEventTypeConfigUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    color: str | None = Field(default=None, max_length=32)
+    frequency_interval: int | None = Field(default=None, ge=1)
+    frequency_unit: str | None = Field(default=None, pattern="^(day|week|month|year)$")
+
+
+class CalendarEventTypeConfigRead(CalendarEventTypeConfigBase, ORMModel):
+    id: int
+    created_at: datetime | None = None
+
+
 class CalendarEventBase(BaseModel):
     project_id: int | None = None
-    type: CalendarEventType
+    type: str = Field(..., min_length=1, max_length=100)
+    event_type_id: int | None = None
     title: str
-    due_date: datetime
+    description: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    due_date: datetime | None = None
     owner_id: int
     status: CalendarEventStatus = CalendarEventStatus.SCHEDULED
+    color: str | None = None
+    meeting_link: str | None = None
+    is_milestone: bool = False
+    updates: list[dict[str, Any]] = []
+    milestones: list[dict[str, Any]] = []
+    final_reports: list[dict[str, Any]] = []
     recurrence_rule: str | None = None
 
 
@@ -340,16 +439,45 @@ class CalendarEventCreate(CalendarEventBase):
 
 class CalendarEventUpdate(BaseModel):
     project_id: int | None = None
-    type: CalendarEventType | None = None
+    type: str | None = Field(default=None, min_length=1, max_length=100)
+    event_type_id: int | None = None
     title: str | None = None
+    description: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
     due_date: datetime | None = None
     owner_id: int | None = None
     status: CalendarEventStatus | None = None
+    color: str | None = None
+    meeting_link: str | None = None
+    is_milestone: bool | None = None
+    updates: list[dict[str, Any]] | None = None
+    milestones: list[dict[str, Any]] | None = None
+    final_reports: list[dict[str, Any]] | None = None
     recurrence_rule: str | None = None
 
 
-class CalendarEventRead(CalendarEventBase, ORMModel):
+class CalendarEventRead(ORMModel):
     id: int
+    project_id: int | None = None
+    type: str
+    event_type_id: int | None = None
+    title: str
+    description: str | None = None
+    start_at: datetime
+    end_at: datetime
+    due_date: datetime
+    owner_id: int
+    status: CalendarEventStatus
+    color: str | None = None
+    meeting_link: str | None = None
+    is_milestone: bool = False
+    updates: list[dict[str, Any]] = []
+    milestones: list[dict[str, Any]] = []
+    final_reports: list[dict[str, Any]] = []
+    recurrence_rule: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class ApprovalRead(ORMModel):
@@ -371,6 +499,49 @@ class NotificationLogRead(ORMModel):
     subject: str
     sent_at: datetime
     related_entity: str | None
+
+
+class ProjectReportDocumentRead(ORMModel):
+    id: int
+    project_id: int
+    report_type_id: int
+    title: str
+    period_label: str
+    filename: str
+    content_type: str | None = None
+    notes: str | None = None
+    uploaded_by: int
+    created_at: datetime
+
+
+class ProjectReportTypeBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=150)
+    description: str | None = None
+    frequency_interval: int | None = Field(default=None, ge=1)
+    frequency_unit: str | None = Field(default=None, pattern="^(day|week|month|year)$")
+
+
+class ProjectReportTypeCreate(ProjectReportTypeBase):
+    pass
+
+
+class ProjectReportTypeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    description: str | None = None
+    frequency_interval: int | None = Field(default=None, ge=1)
+    frequency_unit: str | None = Field(default=None, pattern="^(day|week|month|year)$")
+
+
+class ProjectReportTypeRead(ProjectReportTypeBase, ORMModel):
+    id: int
+    project_id: int
+    template_filename: str | None = None
+    template_content_type: str | None = None
+    has_template: bool = False
+    created_by: int
+    created_at: datetime
+    updated_at: datetime | None = None
+    documents: list[ProjectReportDocumentRead] = []
 
 
 TokenResponse.model_rebuild()

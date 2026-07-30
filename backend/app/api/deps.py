@@ -68,3 +68,20 @@ async def assert_project_access(
     )
     if membership.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Project access denied")
+
+
+async def assert_can_manage_report_library(
+    project_id: int,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    """Admin or the project's assigned team lead can manage report types/templates."""
+    if current_user.role == RoleEnum.ADMIN:
+        return
+    project = await db.get(Project, project_id)
+    if project and project.team_lead_id == current_user.id:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Only the project team lead or an admin can manage report types",
+    )

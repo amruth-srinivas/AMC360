@@ -44,6 +44,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+async function requestBlob(path: string): Promise<Blob> {
+  const headers = new Headers();
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Request failed");
+  }
+  return response.blob();
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
@@ -55,4 +69,5 @@ export const api = {
     request<T>(path, { method: "POST", body }),
   putForm: <T>(path: string, body: FormData) =>
     request<T>(path, { method: "PUT", body }),
+  getBlob: (path: string) => requestBlob(path),
 };

@@ -8,6 +8,7 @@ from app.api.v1 import (
     health_checks,
     notifications,
     projects,
+    report_library,
     reports,
     templates,
     tickets,
@@ -18,6 +19,7 @@ from app.api.v1 import (
 api_router = APIRouter()
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
+api_router.include_router(report_library.router)
 api_router.include_router(projects.router)
 api_router.include_router(templates.router)
 api_router.include_router(reports.router)
