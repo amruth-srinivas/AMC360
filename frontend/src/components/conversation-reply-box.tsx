@@ -49,19 +49,19 @@ export function ConversationReplyBox({
   const canPost = (value.trim().length > 0 || pendingFiles.length > 0) && !disabled && !posting;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-3 py-1.5">
+    <div className="overflow-hidden rounded-xl border border-sky-100 bg-white shadow-md shadow-sky-50">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-50 bg-sky-50/60 px-3 py-1.5">
         <button
           type="button"
           disabled={disabled}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => fileInputRef.current?.click()}
-          className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md border border-sky-100 bg-white px-2.5 py-1 text-xs font-medium text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <Paperclip className="size-3.5 text-gray-500" />
+          <Paperclip className="size-3.5 text-sky-500" />
           Attach media/file
         </button>
-        <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-500 select-none">
+        <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-slate-500 select-none">
           <input
             type="checkbox"
             checked={internalNote}
@@ -125,7 +125,7 @@ export function ConversationReplyBox({
         type="button"
         disabled={!canPost}
         onClick={handlePost}
-        className="relative flex h-9 w-full items-center bg-[#8B9FE8] text-xs font-semibold text-white transition hover:bg-[#7A8FD6] disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+        className="relative flex h-9 w-full items-center bg-sky-500 text-xs font-semibold text-white transition hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
       >
         <Send className="absolute left-3 size-3.5" />
         <span className="flex-1 text-center">{posting ? "Posting…" : "Post"}</span>

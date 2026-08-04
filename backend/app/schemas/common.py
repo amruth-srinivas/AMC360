@@ -506,7 +506,7 @@ class ProjectReportDocumentRead(ORMModel):
     project_id: int
     report_type_id: int
     title: str
-    period_label: str
+    period_label: str | None = None
     filename: str
     content_type: str | None = None
     notes: str | None = None

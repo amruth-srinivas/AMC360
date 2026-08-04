@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Eye } from "lucide-react";
+import { renderAsync } from "docx-preview";
 import { init } from "pptx-preview";
 
 import { api } from "../lib/api";
@@ -34,6 +35,27 @@ export function isLegacyPptDocument(contentType: string | null | undefined, file
   );
 }
 
+export function isDocxDocument(contentType: string | null | undefined, filename: string) {
+  const lower = (contentType ?? "").toLowerCase();
+  const name = filename.toLowerCase();
+  return (
+    name.endsWith(".docx") ||
+    lower.includes("wordprocessingml.document") ||
+    lower === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  );
+}
+
+export function isLegacyDocDocument(contentType: string | null | undefined, filename: string) {
+  const lower = (contentType ?? "").toLowerCase();
+  const name = filename.toLowerCase();
+  if (name.endsWith(".docx")) return false;
+  return (
+    name.endsWith(".doc") ||
+    lower === "application/msword" ||
+    (lower.includes("msword") && !lower.includes("wordprocessingml"))
+  );
+}
+
 export function isImageDocument(contentType: string | null | undefined, filename: string) {
   const lower = (contentType ?? "").toLowerCase();
   return lower.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(filename);
@@ -45,11 +67,82 @@ export function isPdfDocument(contentType: string | null | undefined, filename: 
   return lower.includes("pdf") || name.endsWith(".pdf");
 }
 
+export function needsArrayBufferPreview(contentType: string | null | undefined, filename: string) {
+  return isPptxDocument(contentType, filename) || isDocxDocument(contentType, filename);
+}
+
 export function isPreviewableDocument(contentType: string | null | undefined, filename: string) {
   return (
     isPdfDocument(contentType, filename) ||
     isImageDocument(contentType, filename) ||
-    isPptxDocument(contentType, filename)
+    isPptxDocument(contentType, filename) ||
+    isDocxDocument(contentType, filename)
+  );
+}
+
+export function DocxPreviewPane({
+  arrayBuffer,
+  compact = false,
+}: {
+  arrayBuffer: ArrayBuffer;
+  compact?: boolean;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      host.innerHTML = "";
+      try {
+        await renderAsync(arrayBuffer.slice(0), host, undefined, {
+          className: "docx-preview-body",
+          inWrapper: true,
+          ignoreWidth: compact,
+          ignoreHeight: true,
+          breakPages: !compact,
+          useBase64URL: true,
+        });
+        if (cancelled) host.innerHTML = "";
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unable to preview this Word document");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      host.innerHTML = "";
+    };
+  }, [arrayBuffer, compact]);
+
+  return (
+    <div className="relative h-full w-full overflow-hidden rounded-lg bg-white">
+      {loading ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/90 text-sm text-gray-500">
+          Loading document…
+        </div>
+      ) : null}
+      {error ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-white p-4 text-center text-xs text-rose-600">
+          {error}
+        </div>
+      ) : null}
+      <div
+        ref={hostRef}
+        className={`h-full w-full overflow-auto bg-gray-100 ${compact ? "p-2" : "p-4"}`}
+      />
+    </div>
   );
 }
 
@@ -134,6 +227,10 @@ function InlinePreviewBody({ preview }: { preview: LoadedPreview }) {
     );
   }
 
+  if (isDocxDocument(preview.contentType, preview.filename) && preview.arrayBuffer) {
+    return <DocxPreviewPane arrayBuffer={preview.arrayBuffer} compact />;
+  }
+
   if (isPptxDocument(preview.contentType, preview.filename) && preview.arrayBuffer) {
     return <PptxPreviewPane arrayBuffer={preview.arrayBuffer} compact />;
   }
@@ -152,7 +249,9 @@ function InlinePreviewBody({ preview }: { preview: LoadedPreview }) {
     <div className="flex h-full items-center justify-center px-4 text-center text-xs text-gray-500">
       {isLegacyPptDocument(preview.contentType, preview.filename)
         ? "Legacy .ppt preview is not supported. Re-save as .pptx to preview here."
-        : "Preview is not available for this file type."}
+        : isLegacyDocDocument(preview.contentType, preview.filename)
+          ? "Legacy .doc preview is not supported. Re-save as .docx to preview here."
+          : "Preview is not available for this file type."}
     </div>
   );
 }
@@ -187,7 +286,7 @@ export function DocumentInlinePreview({
 
         const resolvedType = contentType || blob.type || "application/octet-stream";
         const blobUrl = URL.createObjectURL(blob);
-        const arrayBuffer = isPptxDocument(resolvedType, filename)
+        const arrayBuffer = needsArrayBufferPreview(resolvedType, filename)
           ? await blob.arrayBuffer()
           : undefined;
 

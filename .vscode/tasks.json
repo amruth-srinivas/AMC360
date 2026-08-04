@@ -1,0 +1,78 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "backend",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe -m uvicorn app.main:app --host 172.18.100.54 --port 8954 --reload",
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "env": {
+          "PYTHONUNBUFFERED": "1"
+        }
+      },
+      "windows": {
+        "command": "${workspaceFolder}\\backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 172.18.100.54 --port 8954 --reload"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "uvicorn",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "(Uvicorn running on|Application startup complete)"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "amc-dev",
+        "clear": true
+      }
+    },
+    {
+      "label": "frontend",
+      "type": "shell",
+      "command": "npm run dev -- --host 172.18.100.54 --port 5173",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "(Local:|ready in)"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "amc-dev",
+        "clear": true
+      }
+    },
+    {
+      "label": "dev:all",
+      "detail": "Start backend (8954) + frontend (5173)",
+      "dependsOn": ["backend", "frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "amc-dev"
+      }
+    }
+  ]
+}

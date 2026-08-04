@@ -47,7 +47,7 @@ import {
   ArrowLeft,
   Users,
 } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import type React from "react";
 import { useEffect, useState } from "react";
@@ -93,6 +93,16 @@ import { useAuth } from "../store/auth";
 import { ProjectCalendarPanel } from "../components/project-calendar";
 import { ProjectReportLibrary } from "../components/project-report-library";
 import type { ReportType } from "../components/project-report-library";
+import {
+  DocxPreviewPane,
+  isDocxDocument,
+  isImageDocument,
+  isLegacyDocDocument,
+  isPptxDocument,
+  isPreviewableDocument,
+  needsArrayBufferPreview,
+  PptxPreviewPane,
+} from "../components/pptx-preview-pane";
 import {
   TICKET_ISSUE_TYPES,
   TicketDetailPanel,
@@ -174,17 +184,6 @@ const DOCUMENT_CATEGORIES: Array<{ value: ProjectDocumentCategory; label: string
 
 function documentCategoryLabel(category: string) {
   return DOCUMENT_CATEGORIES.find((item) => item.value === category)?.label ?? category;
-}
-
-function isPreviewableDocument(contentType: string | null | undefined, filename: string) {
-  const lower = (contentType ?? "").toLowerCase();
-  const name = filename.toLowerCase();
-  return (
-    lower.includes("pdf") ||
-    name.endsWith(".pdf") ||
-    lower.startsWith("image/") ||
-    /\.(png|jpe?g|gif|webp|bmp)$/i.test(name)
-  );
 }
 
 type TicketRow = MaintenanceTicket;
@@ -965,6 +964,7 @@ export function ProjectDetailPage() {
     filename: string;
     contentType: string | null;
     blobUrl: string;
+    arrayBuffer?: ArrayBuffer;
   } | null>(null);
 
   const project = (projects.data ?? []).find((item) => item.id === projectId);
@@ -1018,12 +1018,17 @@ export function ProjectDetailPage() {
   async function openDocumentPreview(document: ProjectDocument) {
     try {
       const blob = await api.getBlob(`/projects/${projectId}/documents/${document.id}/content`);
+      const resolvedType = document.content_type || blob.type;
       const blobUrl = URL.createObjectURL(blob);
+      const arrayBuffer = needsArrayBufferPreview(resolvedType, document.filename)
+        ? await blob.arrayBuffer()
+        : undefined;
       setPreviewDoc({
         title: document.title || documentCategoryLabel(document.category),
         filename: document.filename,
-        contentType: document.content_type || blob.type,
+        contentType: resolvedType,
         blobUrl,
+        arrayBuffer,
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to open document");
@@ -1386,8 +1391,7 @@ export function ProjectDetailPage() {
             </div>
             <div className="min-h-0 flex-1 bg-gray-100 p-3">
               {previewDoc && isPreviewableDocument(previewDoc.contentType, previewDoc.filename) ? (
-                previewDoc.contentType?.startsWith("image/") ||
-                /\.(png|jpe?g|gif|webp|bmp)$/i.test(previewDoc.filename) ? (
+                isImageDocument(previewDoc.contentType, previewDoc.filename) ? (
                   <div className="flex h-full items-center justify-center overflow-auto rounded-lg bg-white p-4">
                     <img
                       src={previewDoc.blobUrl}
@@ -1395,6 +1399,12 @@ export function ProjectDetailPage() {
                       className="max-h-full max-w-full object-contain"
                     />
                   </div>
+                ) : isDocxDocument(previewDoc.contentType, previewDoc.filename) &&
+                  previewDoc.arrayBuffer ? (
+                  <DocxPreviewPane arrayBuffer={previewDoc.arrayBuffer} />
+                ) : isPptxDocument(previewDoc.contentType, previewDoc.filename) &&
+                  previewDoc.arrayBuffer ? (
+                  <PptxPreviewPane arrayBuffer={previewDoc.arrayBuffer} />
                 ) : (
                   <iframe
                     title={previewDoc.filename}
@@ -1406,7 +1416,9 @@ export function ProjectDetailPage() {
                 <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-white p-8 text-center">
                   <FileText className="h-10 w-10 text-primary" />
                   <p className="text-sm text-gray-700">
-                    Preview is not available for this file type. Download it to open locally.
+                    {isLegacyDocDocument(previewDoc.contentType, previewDoc.filename)
+                      ? "Legacy .doc files can’t be previewed in the browser. Re-save as .docx, or download to open locally."
+                      : "Preview is not available for this file type. Download it to open locally."}
                   </p>
                   <a
                     href={previewDoc.blobUrl}
@@ -1773,17 +1785,51 @@ export function TicketsPage() {
 
 export function TicketDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const ticketId = Number(id);
   const ticket = useQuery({
     queryKey: ["ticket", ticketId],
     queryFn: () => api.get<TicketRow>(`/tickets/${ticketId}`),
   });
 
+  function closeTicketPage() {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    if (ticket.data?.project_id) {
+      navigate(`/projects/${ticket.data.project_id}`);
+      return;
+    }
+    navigate("/tickets");
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title={ticket.data ? `Ticket #${ticket.data.ticket_number ?? ticket.data.id}` : "Ticket detail"}
         description="Maintenance issue tracking with conversation, resolution, attachments, and history."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {ticket.data?.project_id ? (
+              <Link
+                to={`/projects/${ticket.data.project_id}`}
+                className="inline-flex h-9 items-center rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                Back to project
+              </Link>
+            ) : null}
+            <button
+              type="button"
+              onClick={closeTicketPage}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              aria-label="Close ticket"
+            >
+              <X className="size-4" />
+              Close
+            </button>
+          </div>
+        }
       />
       <TicketDetailPanel ticketId={ticketId} />
     </div>
@@ -2295,6 +2341,7 @@ export function AdminProjectsPage() {
     filename: string;
     contentType: string | null;
     blobUrl: string;
+    arrayBuffer?: ArrayBuffer;
   } | null>(null);
   const [docsModal, setDocsModal] = useState<{
     projectId: number;
@@ -2522,12 +2569,17 @@ export function AdminProjectsPage() {
   async function openDocumentPreview(projectId: number, document: ProjectDocument) {
     try {
       const blob = await api.getBlob(`/projects/${projectId}/documents/${document.id}/content`);
+      const resolvedType = document.content_type || blob.type;
       const blobUrl = URL.createObjectURL(blob);
+      const arrayBuffer = needsArrayBufferPreview(resolvedType, document.filename)
+        ? await blob.arrayBuffer()
+        : undefined;
       setPreviewDoc({
         title: document.title || documentCategoryLabel(document.category),
         filename: document.filename,
-        contentType: document.content_type || blob.type,
+        contentType: resolvedType,
         blobUrl,
+        arrayBuffer,
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to open document");
@@ -3289,8 +3341,7 @@ export function AdminProjectsPage() {
             <div className="min-h-0 flex-1 bg-gray-100 p-3">
               {previewDoc &&
               isPreviewableDocument(previewDoc.contentType, previewDoc.filename) ? (
-                previewDoc.contentType?.startsWith("image/") ||
-                /\.(png|jpe?g|gif|webp|bmp)$/i.test(previewDoc.filename) ? (
+                isImageDocument(previewDoc.contentType, previewDoc.filename) ? (
                   <div className="flex h-full items-center justify-center overflow-auto rounded-lg bg-white p-4">
                     <img
                       src={previewDoc.blobUrl}
@@ -3298,6 +3349,12 @@ export function AdminProjectsPage() {
                       className="max-h-full max-w-full object-contain"
                     />
                   </div>
+                ) : isDocxDocument(previewDoc.contentType, previewDoc.filename) &&
+                  previewDoc.arrayBuffer ? (
+                  <DocxPreviewPane arrayBuffer={previewDoc.arrayBuffer} />
+                ) : isPptxDocument(previewDoc.contentType, previewDoc.filename) &&
+                  previewDoc.arrayBuffer ? (
+                  <PptxPreviewPane arrayBuffer={previewDoc.arrayBuffer} />
                 ) : (
                   <iframe
                     title={previewDoc.filename}
@@ -3309,7 +3366,9 @@ export function AdminProjectsPage() {
                 <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-white p-8 text-center">
                   <FileText className="h-10 w-10 text-primary" />
                   <p className="text-sm text-gray-700">
-                    Preview is not available for this file type. Download it to open locally.
+                    {isLegacyDocDocument(previewDoc.contentType, previewDoc.filename)
+                      ? "Legacy .doc files can’t be previewed in the browser. Re-save as .docx, or download to open locally."
+                      : "Preview is not available for this file type. Download it to open locally."}
                   </p>
                   <a
                     href={previewDoc.blobUrl}

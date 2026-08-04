@@ -294,7 +294,7 @@ class ProjectReportDocument(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
     report_type_id: Mapped[int] = mapped_column(ForeignKey("project_report_types.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    period_label: Mapped[str] = mapped_column(String(120), nullable=False)
+    period_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     object_key: Mapped[str] = mapped_column(String(500), nullable=False)
     content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)

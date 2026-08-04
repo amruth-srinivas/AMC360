@@ -29,11 +29,15 @@ import { Textarea } from "./ui/input";
 import { Backdrop } from "./tailgrids/core/overlay";
 import {
   DocumentInlinePreview,
+  DocxPreviewPane,
+  isDocxDocument,
   isImageDocument,
+  isLegacyDocDocument,
   isLegacyPptDocument,
   isPdfDocument,
   isPreviewableDocument,
   isPptxDocument,
+  needsArrayBufferPreview,
   PptxPreviewPane,
 } from "./pptx-preview-pane";
 import { api } from "../lib/api";
@@ -45,7 +49,7 @@ export type ReportDocument = {
   project_id: number;
   report_type_id: number;
   title: string;
-  period_label: string;
+  period_label?: string | null;
   filename: string;
   content_type?: string | null;
   notes?: string | null;
@@ -89,6 +93,29 @@ type UploadForm = {
   period_label: string;
   notes: string;
 };
+
+function isRecurringType(item: Pick<ReportType, "frequency_interval" | "frequency_unit">) {
+  return Boolean(item.frequency_interval && item.frequency_unit);
+}
+
+function periodsForType(item: ReportType) {
+  if (!isRecurringType(item)) return [];
+  const set = new Set<string>();
+  for (const doc of item.documents ?? []) {
+    if (doc.period_label?.trim()) set.add(doc.period_label.trim());
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+function documentMatchesQuery(doc: ReportDocument, q: string) {
+  if (!q) return true;
+  return (
+    doc.title.toLowerCase().includes(q) ||
+    doc.filename.toLowerCase().includes(q) ||
+    (doc.period_label ?? "").toLowerCase().includes(q) ||
+    (doc.notes ?? "").toLowerCase().includes(q)
+  );
+}
 
 type NavLocation =
   | { kind: "root" }
@@ -230,14 +257,6 @@ function CompactAction({
   );
 }
 
-function periodsForType(item: ReportType) {
-  const set = new Set<string>();
-  for (const doc of item.documents ?? []) {
-    if (doc.period_label?.trim()) set.add(doc.period_label.trim());
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
-}
-
 export function ProjectReportLibrary({
   projectId,
   canManage,
@@ -262,6 +281,7 @@ export function ProjectReportLibrary({
   const [uploadTypeId, setUploadTypeId] = useState<number | null>(null);
   const [uploadForm, setUploadForm] = useState<UploadForm>(emptyUploadForm());
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
@@ -280,6 +300,13 @@ export function ProjectReportLibrary({
   useEffect(() => {
     if (nav.kind !== "root" && !typeMap.has(nav.typeId)) {
       setNav({ kind: "root" });
+      return;
+    }
+    if (nav.kind === "period") {
+      const item = typeMap.get(nav.typeId);
+      if (item && !isRecurringType(item)) {
+        setNav({ kind: "type", typeId: nav.typeId });
+      }
     }
   }, [nav, typeMap]);
 
@@ -295,7 +322,7 @@ export function ProjectReportLibrary({
       const blob = await api.getBlob(path);
       const resolvedType = contentType || blob.type;
       const blobUrl = URL.createObjectURL(blob);
-      const arrayBuffer = isPptxDocument(resolvedType, filename)
+      const arrayBuffer = needsArrayBufferPreview(resolvedType, filename)
         ? await blob.arrayBuffer()
         : undefined;
       setPreviewDoc((current) => {
@@ -329,24 +356,21 @@ export function ProjectReportLibrary({
     if (nav.kind === "root") {
       for (const item of types) {
         const periods = periodsForType(item);
+        const recurring = isRecurringType(item);
         const matchesType =
           !q ||
           item.name.toLowerCase().includes(q) ||
           (item.description ?? "").toLowerCase().includes(q) ||
-          (item.documents ?? []).some(
-            (doc) =>
-              doc.title.toLowerCase().includes(q) ||
-              doc.filename.toLowerCase().includes(q) ||
-              doc.period_label.toLowerCase().includes(q),
-          );
+          (item.documents ?? []).some((doc) => documentMatchesQuery(doc, q));
         if (!matchesType) continue;
+        const fileCount = item.documents?.length ?? 0;
         rows.push({
           kind: "folder",
           key: `type-${item.id}`,
           name: item.name,
-          subtitle: `${formatFrequency(item.frequency_interval, item.frequency_unit)} · ${
-            item.documents?.length ?? 0
-          } file(s) · ${periods.length} period folder(s)`,
+          subtitle: recurring
+            ? `${formatFrequency(item.frequency_interval, item.frequency_unit)} · ${fileCount} file(s) · ${periods.length} period folder(s)`
+            : `As needed · ${fileCount} file(s) · direct upload`,
           modified: item.updated_at || item.created_at,
           onOpen: () => {
             setExpandedTypes((current) => new Set(current).add(item.id));
@@ -381,26 +405,73 @@ export function ProjectReportLibrary({
         }
       }
 
-      for (const period of periodsForType(activeType)) {
-        const docs = (activeType.documents ?? []).filter((doc) => doc.period_label === period);
-        const matches =
-          !q ||
-          period.toLowerCase().includes(q) ||
-          docs.some(
-            (doc) =>
-              doc.title.toLowerCase().includes(q) || doc.filename.toLowerCase().includes(q),
-          );
-        if (!matches) continue;
+      if (isRecurringType(activeType)) {
+        for (const period of periodsForType(activeType)) {
+          const docs = (activeType.documents ?? []).filter((doc) => doc.period_label === period);
+          const matches =
+            !q ||
+            period.toLowerCase().includes(q) ||
+            docs.some((doc) => documentMatchesQuery(doc, q));
+          if (!matches) continue;
+          rows.push({
+            kind: "folder",
+            key: `period-${activeType.id}-${period}`,
+            name: period,
+            subtitle: `${docs.length} completed report${docs.length === 1 ? "" : "s"}`,
+            modified: docs[0]?.created_at,
+            onOpen: () => {
+              setNav({ kind: "period", typeId: activeType.id, period });
+              setSearch("");
+            },
+          });
+        }
+
+        // Orphan files (no period) under a recurring type still show as files
+        const orphans = (activeType.documents ?? []).filter((doc) => !doc.period_label?.trim());
+        for (const doc of orphans) {
+          if (!documentMatchesQuery(doc, q)) continue;
+          rows.push({
+            kind: "file",
+            key: `doc-${doc.id}`,
+            name: doc.title,
+            filename: doc.filename,
+            meta: doc.notes || undefined,
+            modified: doc.created_at,
+            documentId: doc.id,
+            typeId: activeType.id,
+            canDelete: canManage || doc.uploaded_by === user?.id,
+            onOpen: () =>
+              void openReportPreview(
+                `/projects/${projectId}/report-types/${activeType.id}/documents/${doc.id}/content`,
+                doc.title,
+                doc.filename,
+                doc.content_type,
+              ),
+          });
+        }
+        return rows;
+      }
+
+      // As-needed: list files directly in this folder
+      for (const doc of activeType.documents ?? []) {
+        if (!documentMatchesQuery(doc, q)) continue;
         rows.push({
-          kind: "folder",
-          key: `period-${activeType.id}-${period}`,
-          name: period,
-          subtitle: `${docs.length} completed report${docs.length === 1 ? "" : "s"}`,
-          modified: docs[0]?.created_at,
-          onOpen: () => {
-            setNav({ kind: "period", typeId: activeType.id, period });
-            setSearch("");
-          },
+          kind: "file",
+          key: `doc-${doc.id}`,
+          name: doc.title,
+          filename: doc.filename,
+          meta: doc.notes || undefined,
+          modified: doc.created_at,
+          documentId: doc.id,
+          typeId: activeType.id,
+          canDelete: canManage || doc.uploaded_by === user?.id,
+          onOpen: () =>
+            void openReportPreview(
+              `/projects/${projectId}/report-types/${activeType.id}/documents/${doc.id}/content`,
+              doc.title,
+              doc.filename,
+              doc.content_type,
+            ),
         });
       }
       return rows;
@@ -408,12 +479,7 @@ export function ProjectReportLibrary({
 
     const docs = (activeType.documents ?? []).filter((doc) => doc.period_label === nav.period);
     for (const doc of docs) {
-      const matches =
-        !q ||
-        doc.title.toLowerCase().includes(q) ||
-        doc.filename.toLowerCase().includes(q) ||
-        (doc.notes ?? "").toLowerCase().includes(q);
-      if (!matches) continue;
+      if (!documentMatchesQuery(doc, q)) continue;
       rows.push({
         kind: "file",
         key: `doc-${doc.id}`,
@@ -472,12 +538,14 @@ export function ProjectReportLibrary({
       }
       return;
     }
+    const targetType = typeMap.get(typeId);
     const period =
       prefillPeriod ||
-      (nav.kind === "period" ? nav.period : "");
+      (nav.kind === "period" && targetType && isRecurringType(targetType) ? nav.period : "");
     setUploadTypeId(typeId);
     setUploadForm(emptyUploadForm(period));
     setUploadFile(null);
+    setUploadFiles([]);
     setUploadModalOpen(true);
   }
 
@@ -534,35 +602,85 @@ export function ProjectReportLibrary({
   const uploadDocumentMutation = useMutation({
     mutationFn: async () => {
       if (!uploadTypeId) throw new Error("Select a report type folder");
-      if (!uploadFile) throw new Error("Choose a file to upload");
-      if (!uploadForm.title.trim() || !uploadForm.period_label.trim()) {
-        throw new Error("Document name and period folder are required");
+      const targetType = typeMap.get(uploadTypeId);
+      if (!targetType) throw new Error("Report type folder not found");
+      const recurring = isRecurringType(targetType);
+
+      if (recurring) {
+        if (!uploadFile) throw new Error("Choose a file to upload");
+        if (!uploadForm.title.trim() || !uploadForm.period_label.trim()) {
+          throw new Error("Document name and period folder are required");
+        }
+        const data = new FormData();
+        data.append("file", uploadFile);
+        data.append("title", uploadForm.title.trim());
+        data.append("period_label", uploadForm.period_label.trim());
+        if (uploadForm.notes.trim()) data.append("notes", uploadForm.notes.trim());
+        return {
+          mode: "recurring" as const,
+          docs: [
+            await api.postForm<ReportDocument>(
+              `/projects/${projectId}/report-types/${uploadTypeId}/documents`,
+              data,
+            ),
+          ],
+        };
       }
-      const data = new FormData();
-      data.append("file", uploadFile);
-      data.append("title", uploadForm.title.trim());
-      data.append("period_label", uploadForm.period_label.trim());
-      if (uploadForm.notes.trim()) data.append("notes", uploadForm.notes.trim());
-      return api.postForm<ReportDocument>(
-        `/projects/${projectId}/report-types/${uploadTypeId}/documents`,
-        data,
-      );
+
+      const files = uploadFiles.length > 0 ? uploadFiles : uploadFile ? [uploadFile] : [];
+      if (files.length === 0) throw new Error("Choose one or more files to upload");
+
+      const docs: ReportDocument[] = [];
+      for (const file of files) {
+        const baseName = file.name.replace(/\.[^.]+$/, "") || file.name;
+        const data = new FormData();
+        data.append("file", file);
+        data.append(
+          "title",
+          files.length === 1 && uploadForm.title.trim()
+            ? uploadForm.title.trim()
+            : baseName,
+        );
+        if (uploadForm.notes.trim()) data.append("notes", uploadForm.notes.trim());
+        docs.push(
+          await api.postForm<ReportDocument>(
+            `/projects/${projectId}/report-types/${uploadTypeId}/documents`,
+            data,
+          ),
+        );
+      }
+      return { mode: "as_needed" as const, docs };
     },
-    onSuccess: async (doc) => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["project-report-types", projectId] });
       setUploadModalOpen(false);
       setUploadFile(null);
+      setUploadFiles([]);
       setUploadForm(emptyUploadForm());
-      setExpandedTypes((current) => new Set(current).add(doc.report_type_id));
-      setNav({
-        kind: "period",
-        typeId: doc.report_type_id,
-        period: doc.period_label,
-      });
-      toast.success("Document uploaded");
+      const first = result.docs[0];
+      if (first) {
+        setExpandedTypes((current) => new Set(current).add(first.report_type_id));
+        if (result.mode === "recurring" && first.period_label) {
+          setNav({
+            kind: "period",
+            typeId: first.report_type_id,
+            period: first.period_label,
+          });
+        } else {
+          setNav({ kind: "type", typeId: first.report_type_id });
+        }
+      }
+      toast.success(
+        result.docs.length === 1
+          ? "Document uploaded"
+          : `${result.docs.length} documents uploaded`,
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
+
+  const uploadTargetType = uploadTypeId ? typeMap.get(uploadTypeId) ?? null : null;
+  const uploadIsRecurring = uploadTargetType ? isRecurringType(uploadTargetType) : true;
 
   const deleteDocumentMutation = useMutation({
     mutationFn: ({ typeId, documentId }: { typeId: number; documentId: number }) =>
@@ -689,37 +807,46 @@ export function ProjectReportLibrary({
                         </button>
                       </div>
                       {expanded ? (
-                        <ul className="mb-1 ml-8 space-y-0.5 border-l border-gray-200 pl-2">
-                          {periods.length === 0 ? (
-                            <li className="px-2 py-1 text-[11px] text-gray-400">No period folders</li>
-                          ) : (
-                            periods.map((period) => {
-                              const periodSelected =
-                                nav.kind === "period" &&
-                                nav.typeId === item.id &&
-                                nav.period === period;
-                              return (
-                                <li key={period}>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setNav({ kind: "period", typeId: item.id, period });
-                                      setSearch("");
-                                    }}
-                                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
-                                      periodSelected
-                                        ? "bg-primary/10 font-semibold text-primary"
-                                        : "text-gray-600 hover:bg-white"
-                                    }`}
-                                  >
-                                    <PetiteIcon tone="sky" icon={Folder} />
-                                    <span className="truncate">{period}</span>
-                                  </button>
-                                </li>
-                              );
-                            })
-                          )}
-                        </ul>
+                        isRecurringType(item) ? (
+                          <ul className="mb-1 ml-8 space-y-0.5 border-l border-gray-200 pl-2">
+                            {periods.length === 0 ? (
+                              <li className="px-2 py-1 text-[11px] text-gray-400">
+                                No period folders yet
+                              </li>
+                            ) : (
+                              periods.map((period) => {
+                                const periodSelected =
+                                  nav.kind === "period" &&
+                                  nav.typeId === item.id &&
+                                  nav.period === period;
+                                return (
+                                  <li key={period}>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNav({ kind: "period", typeId: item.id, period });
+                                        setSearch("");
+                                      }}
+                                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                                        periodSelected
+                                          ? "bg-primary/10 font-semibold text-primary"
+                                          : "text-gray-600 hover:bg-white"
+                                      }`}
+                                    >
+                                      <PetiteIcon tone="sky" icon={Folder} />
+                                      <span className="truncate">{period}</span>
+                                    </button>
+                                  </li>
+                                );
+                              })
+                            )}
+                          </ul>
+                        ) : (
+                          <p className="mb-1 ml-10 px-2 py-1 text-[11px] text-gray-400">
+                            Direct uploads · {(item.documents ?? []).length} file
+                            {(item.documents ?? []).length === 1 ? "" : "s"}
+                          </p>
+                        )
                       ) : null}
                     </li>
                   );
@@ -856,10 +983,12 @@ export function ProjectReportLibrary({
                         <p className="mt-1 max-w-sm text-xs text-gray-400">
                           {nav.kind === "root"
                             ? canManage
-                              ? "Create a folder for a report type, upload its template, then file completed reports by period."
+                              ? "Create a folder for a report type. Use recurring cadence for period folders, or as-needed for direct multi-file uploads."
                               : "No report folders have been set up for this project yet."
                             : nav.kind === "type"
-                              ? "Upload a completed report to create a period folder, or add a template for this type."
+                              ? activeType && isRecurringType(activeType)
+                                ? "Upload a completed report to create a period folder, or add a template for this type."
+                                : "Upload files directly into this folder. Multi-file upload is supported."
                               : "No documents in this period folder yet."}
                         </p>
                         <div className="mt-4 flex flex-wrap justify-center gap-2">
@@ -1096,6 +1225,7 @@ export function ProjectReportLibrary({
           if (!open) {
             setUploadModalOpen(false);
             setUploadFile(null);
+            setUploadFiles([]);
             setUploadForm(emptyUploadForm());
           }
         }}
@@ -1106,7 +1236,9 @@ export function ProjectReportLibrary({
               <div>
                 <h2 className="text-base font-semibold text-gray-900">Upload document</h2>
                 <p className="text-xs text-gray-500">
-                  Choose a report type folder, period folder name, and file
+                  {uploadIsRecurring
+                    ? "Files go into a period folder under a recurring report type"
+                    : "Files upload directly into this as-needed folder (multiple allowed)"}
                 </p>
               </div>
               <CompactAction
@@ -1120,32 +1252,52 @@ export function ProjectReportLibrary({
               <FormField label="Report type folder">
                 <select
                   value={uploadTypeId ?? ""}
-                  onChange={(event) => setUploadTypeId(Number(event.target.value))}
+                  onChange={(event) => {
+                    const nextId = Number(event.target.value);
+                    setUploadTypeId(nextId);
+                    const nextType = typeMap.get(nextId);
+                    if (nextType && !isRecurringType(nextType)) {
+                      setUploadForm((current) => ({ ...current, period_label: "" }));
+                    }
+                  }}
                   className="h-9 w-full appearance-none rounded-md border border-gray-200 bg-white px-3 pr-8 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 >
                   {types.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
+                      {isRecurringType(item) ? " (recurring)" : " (as needed)"}
                     </option>
                   ))}
                 </select>
               </FormField>
-              <FormField label="Period folder">
-                <IconInput
-                  value={uploadForm.period_label}
-                  onChange={(value) =>
-                    setUploadForm((current) => ({ ...current, period_label: String(value) }))
-                  }
-                  placeholder="e.g. Jul–Sep 2026"
-                />
-              </FormField>
-              <FormField label="Document name">
+              {uploadIsRecurring ? (
+                <FormField label="Period folder">
+                  <IconInput
+                    value={uploadForm.period_label}
+                    onChange={(value) =>
+                      setUploadForm((current) => ({ ...current, period_label: String(value) }))
+                    }
+                    placeholder="e.g. Jul–Sep 2026"
+                  />
+                </FormField>
+              ) : null}
+              <FormField
+                label={
+                  uploadIsRecurring || uploadFiles.length <= 1
+                    ? "Document name"
+                    : "Document name (optional, uses filenames)"
+                }
+              >
                 <IconInput
                   value={uploadForm.title}
                   onChange={(value) =>
                     setUploadForm((current) => ({ ...current, title: String(value) }))
                   }
-                  placeholder="e.g. SPV Data Flow Restoration Report"
+                  placeholder={
+                    uploadIsRecurring
+                      ? "e.g. SPV Data Flow Restoration Report"
+                      : "Optional override for single file"
+                  }
                 />
               </FormField>
               <FormField label="Notes">
@@ -1159,16 +1311,47 @@ export function ProjectReportLibrary({
                 />
               </FormField>
               <div>
-                <p className="mb-1.5 text-xs font-medium text-gray-700">File</p>
+                <p className="mb-1.5 text-xs font-medium text-gray-700">
+                  {uploadIsRecurring ? "File" : "File(s)"}
+                </p>
                 <input
                   type="file"
-                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                  multiple={!uploadIsRecurring}
+                  onChange={(event) => {
+                    const list = event.target.files;
+                    if (!list || list.length === 0) {
+                      setUploadFile(null);
+                      setUploadFiles([]);
+                      return;
+                    }
+                    if (uploadIsRecurring) {
+                      setUploadFile(list[0]);
+                      setUploadFiles([]);
+                    } else {
+                      const next = Array.from(list);
+                      setUploadFiles(next);
+                      setUploadFile(next[0] ?? null);
+                      if (next.length === 1 && !uploadForm.title.trim()) {
+                        const base = next[0].name.replace(/\.[^.]+$/, "") || next[0].name;
+                        setUploadForm((current) => ({ ...current, title: base }));
+                      }
+                    }
+                  }}
                   className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary"
                 />
-                {uploadFile ? (
+                {uploadIsRecurring && uploadFile ? (
                   <p className="mt-1.5 truncate font-mono text-[11px] text-gray-400">
                     {uploadFile.name}
                   </p>
+                ) : null}
+                {!uploadIsRecurring && uploadFiles.length > 0 ? (
+                  <ul className="mt-1.5 max-h-28 space-y-0.5 overflow-y-auto">
+                    {uploadFiles.map((file) => (
+                      <li key={`${file.name}-${file.size}`} className="truncate font-mono text-[11px] text-gray-400">
+                        {file.name}
+                      </li>
+                    ))}
+                  </ul>
                 ) : null}
               </div>
             </div>
@@ -1181,13 +1364,19 @@ export function ProjectReportLibrary({
                 disabled={
                   uploadDocumentMutation.isPending ||
                   !uploadTypeId ||
-                  !uploadForm.title.trim() ||
-                  !uploadForm.period_label.trim() ||
-                  !uploadFile
+                  (uploadIsRecurring
+                    ? !uploadForm.title.trim() ||
+                      !uploadForm.period_label.trim() ||
+                      !uploadFile
+                    : uploadFiles.length === 0 && !uploadFile)
                 }
                 onClick={() => uploadDocumentMutation.mutate()}
               >
-                {uploadDocumentMutation.isPending ? "Uploading…" : "Upload"}
+                {uploadDocumentMutation.isPending
+                  ? "Uploading…"
+                  : !uploadIsRecurring && uploadFiles.length > 1
+                    ? `Upload ${uploadFiles.length} files`
+                    : "Upload"}
               </Button>
             </div>
           </div>
@@ -1353,6 +1542,9 @@ export function ProjectReportLibrary({
                       className="max-h-full max-w-full object-contain"
                     />
                   </div>
+                ) : isDocxDocument(previewDoc.contentType, previewDoc.filename) &&
+                  previewDoc.arrayBuffer ? (
+                  <DocxPreviewPane arrayBuffer={previewDoc.arrayBuffer} />
                 ) : isPptxDocument(previewDoc.contentType, previewDoc.filename) &&
                   previewDoc.arrayBuffer ? (
                   <PptxPreviewPane arrayBuffer={previewDoc.arrayBuffer} />
@@ -1375,7 +1567,9 @@ export function ProjectReportLibrary({
                   <p className="text-sm text-gray-600">
                     {isLegacyPptDocument(previewDoc.contentType, previewDoc.filename)
                       ? "Legacy .ppt files can’t be previewed in the browser. Re-save as .pptx, or download to open locally."
-                      : "Preview is not available for this file type. Download it to open locally."}
+                      : isLegacyDocDocument(previewDoc.contentType, previewDoc.filename)
+                        ? "Legacy .doc files can’t be previewed in the browser. Re-save as .docx, or download to open locally."
+                        : "Preview is not available for this file type. Download it to open locally."}
                   </p>
                   <a
                     href={previewDoc.blobUrl}

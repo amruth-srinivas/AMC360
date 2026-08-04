@@ -270,7 +270,7 @@ async def upload_completed_report(
     project_id: int,
     type_id: int,
     title: str = Form(...),
-    period_label: str = Form(...),
+    period_label: str | None = Form(None),
     notes: str | None = Form(None),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -280,10 +280,19 @@ async def upload_completed_report(
     project = await get_required(db, Project, project_id)
     row = await _get_type_for_project(db, project_id, type_id)
 
-    if not title.strip() or not period_label.strip():
-        raise HTTPException(status_code=400, detail="Document name and period are required")
+    if not title.strip():
+        raise HTTPException(status_code=400, detail="Document name is required")
     if not file.filename:
         raise HTTPException(status_code=400, detail="File is required")
+
+    is_recurring = bool(row.frequency_interval and row.frequency_unit)
+    cleaned_period = (period_label or "").strip() or None
+    if is_recurring and not cleaned_period:
+        raise HTTPException(
+            status_code=400,
+            detail="Period folder is required for recurring report types",
+        )
+
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="File is empty")
@@ -292,7 +301,7 @@ async def upload_completed_report(
         project_no=project.project_no,
         report_type_slug=row.name,
         kind="completed",
-        period_slug=period_label.strip(),
+        period_slug=cleaned_period if is_recurring else None,
         filename=file.filename,
         data=content,
         content_type=file.content_type,
@@ -301,7 +310,7 @@ async def upload_completed_report(
         project_id=project_id,
         report_type_id=row.id,
         title=title.strip(),
-        period_label=period_label.strip(),
+        period_label=cleaned_period if is_recurring else None,
         filename=file.filename,
         object_key=object_key,
         content_type=file.content_type,

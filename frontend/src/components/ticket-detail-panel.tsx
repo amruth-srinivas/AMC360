@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Calendar,
   ChevronDown,
   Clock,
   Download,
   FileText,
+  Hash,
   History,
   MessageSquare,
   Paperclip,
   Save,
+  StickyNote,
   Upload,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -208,8 +211,8 @@ function ChatBubble({
         <div
           className={cn(
             media
-              ? "overflow-hidden rounded-xl border border-gray-200 bg-white p-1 shadow-sm"
-              : "whitespace-pre-wrap px-3 py-1.5 text-sm leading-snug",
+              ? "overflow-hidden rounded-xl border border-sky-100 bg-white p-1 shadow-sm shadow-sky-50"
+              : "whitespace-pre-wrap px-3 py-1.5 text-sm leading-snug shadow-sm",
             !media &&
               (variant === "internal"
                 ? cn(
@@ -217,10 +220,10 @@ function ChatBubble({
                     isMine ? "rounded-br-sm" : "rounded-bl-sm",
                   )
                 : variant === "report"
-                  ? "rounded-2xl rounded-bl-sm border border-amber-200 bg-amber-50 text-amber-950"
+                  ? "rounded-2xl rounded-bl-sm border border-amber-200 bg-amber-50 text-amber-950 shadow-amber-50"
                   : isMine
-                    ? "rounded-2xl rounded-br-sm border border-sky-100 bg-sky-50 text-gray-800"
-                    : "rounded-2xl rounded-bl-sm border border-gray-200 bg-white text-gray-700"),
+                    ? "rounded-2xl rounded-br-sm border border-sky-200 bg-sky-100/80 text-gray-800 shadow-sky-50"
+                    : "rounded-2xl rounded-bl-sm border border-slate-200 bg-white text-gray-700"),
           )}
         >
           {children}
@@ -408,14 +411,15 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
   ];
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div className="overflow-hidden rounded-xl border border-sky-100 bg-white shadow-sm ring-1 ring-sky-50">
       {/* Ticket version bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-slate-50/90 px-5 py-3">
-        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-100 bg-sky-50 px-5 py-3">
+        <span className="inline-flex items-center gap-1.5 rounded-md bg-sky-100 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-sky-700">
+          <Hash className="size-3" />
           Ticket #{ticket.ticket_number ?? ticket.id}
         </span>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex h-9 items-center rounded-lg bg-white px-2.5 text-[11px] font-semibold text-slate-500 ring-1 ring-gray-200">
+          <span className="inline-flex h-9 items-center rounded-lg bg-white/90 px-2.5 text-[11px] font-semibold text-slate-500 ring-1 ring-sky-100">
             V1
           </span>
           <div className="relative">
@@ -426,7 +430,7 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
                 statusMutation.mutate(event.target.value as MaintenanceTicket["status"])
               }
               className={cn(
-                "h-9 min-w-[9.5rem] appearance-none rounded-lg border border-gray-200 bg-white pl-3 pr-8 text-sm font-medium leading-normal text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60",
+                "h-9 min-w-[9.5rem] appearance-none rounded-lg border border-sky-100 bg-white pl-3 pr-8 text-sm font-medium leading-normal text-gray-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60",
                 statusStyles(ticket.status),
               )}
             >
@@ -455,7 +459,7 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
                   })
                   .catch((error: Error) => toast.error(error.message))
               }
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-100 bg-white px-3 text-xs font-medium text-gray-700 transition hover:bg-sky-50"
             >
               <Download className="size-3.5 text-sky-600" />
               Issue report
@@ -465,11 +469,16 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
       </div>
 
       {/* Title + meta */}
-      <div className="border-b border-gray-100 px-5 py-4">
+      <div className="border-b border-sky-100 bg-white px-5 py-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <h2 className="text-xl font-semibold tracking-tight text-gray-900">{ticket.title}</h2>
-            <p className="mt-1 text-sm text-gray-500">{issueTypeLabel(ticket.issue_type)}</p>
+            <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-sky-700/80">
+              <span className="inline-flex size-5 items-center justify-center rounded-md bg-sky-100 text-sky-600">
+                <FileText className="size-3" />
+              </span>
+              {issueTypeLabel(ticket.issue_type)}
+            </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <span
@@ -480,7 +489,7 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
             >
               {ticket.priority}
             </span>
-            <span className="inline-flex h-8 items-center rounded-full bg-gray-100 px-2.5 text-xs font-medium text-gray-600">
+            <span className="inline-flex h-8 items-center rounded-full bg-slate-100 px-2.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200/80">
               {formatLabel(ticket.source)}
             </span>
           </div>
@@ -489,33 +498,43 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
 
       {/* 25 / 75 — details+status | tabs */}
       <div className="flex min-h-[420px] flex-col lg:flex-row">
-        <aside className="w-full shrink-0 border-b border-gray-200 bg-slate-50/50 p-4 lg:w-[25%] lg:border-b-0 lg:border-r">
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+        <aside className="w-full shrink-0 border-b border-sky-100 bg-slate-50 p-4 lg:w-[25%] lg:border-b-0 lg:border-r lg:border-sky-100">
+          <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-sky-700/70">
             Details
           </p>
           <div className="space-y-2.5">
-            <div className="rounded-lg border border-gray-100 bg-white px-3 py-2.5">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Reported on</p>
-              <p className="mt-0.5 text-sm font-medium text-gray-800">
+            <div className="rounded-xl border border-sky-100 bg-white/90 px-3 py-2.5 shadow-sm shadow-sky-50">
+              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-sky-600/70">
+                <Calendar className="size-3" />
+                Reported on
+              </p>
+              <p className="mt-1 text-sm font-medium text-gray-800">
                 {formatDateTime(ticket.reported_on ?? ticket.created_at)}
               </p>
             </div>
-            <div className="rounded-lg border border-gray-100 bg-white px-3 py-2.5">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Opened</p>
-              <p className="mt-0.5 text-sm font-medium text-gray-800">
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-3 py-2.5 shadow-sm shadow-emerald-50/50">
+              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700/70">
+                <Clock className="size-3" />
+                Opened
+              </p>
+              <p className="mt-1 text-sm font-medium text-gray-800">
                 {formatDateTime(ticket.created_at)}
               </p>
             </div>
-            <div className="rounded-lg border border-gray-100 bg-white px-3 py-2.5">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Ticket ID</p>
-              <p className="mt-0.5 font-mono text-sm font-medium text-gray-800">
+            <div className="rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2.5 shadow-sm shadow-violet-50/50">
+              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-violet-700/70">
+                <Hash className="size-3" />
+                Ticket ID
+              </p>
+              <p className="mt-1 font-mono text-sm font-medium text-gray-800">
                 {ticket.ticket_number ?? ticket.id}
               </p>
             </div>
           </div>
 
-          <div className="mt-5">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+          <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50/50 p-3">
+            <p className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-800/70">
+              <StickyNote className="size-3" />
               Status change
             </p>
             <textarea
@@ -523,45 +542,54 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
               value={statusComment}
               onChange={(event) => setStatusComment(event.target.value)}
               placeholder="Add a note when changing status (optional)…"
-              className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none placeholder:text-gray-400 focus:border-primary focus:ring-2 focus:ring-primary/15"
+              className="w-full resize-y rounded-lg border border-amber-100 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none placeholder:text-gray-400 focus:border-primary focus:ring-2 focus:ring-primary/15"
             />
-            <p className="mt-1.5 text-[11px] text-gray-400">
+            <p className="mt-1.5 text-[11px] text-amber-800/50">
               Used when you update status from the header dropdown.
             </p>
           </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col lg:w-[75%]">
-          <div className="border-b border-gray-200 bg-white px-4">
-            <div className="flex flex-wrap gap-4">
+          <div className="border-b border-sky-100 bg-white px-4">
+            <div className="flex flex-wrap gap-1">
               {tabs.map((item) => (
                 <button
                   key={item.key}
                   type="button"
                   onClick={() => setTab(item.key)}
                   className={cn(
-                    "relative inline-flex items-center gap-2 py-3 text-sm font-medium transition",
-                    tab === item.key ? "text-primary" : "text-gray-500 hover:text-gray-800",
+                    "relative inline-flex items-center gap-2 rounded-t-lg px-3 py-2.5 text-sm font-medium transition",
+                    tab === item.key
+                      ? "bg-sky-50 text-primary"
+                      : "text-gray-500 hover:bg-slate-50 hover:text-gray-800",
                   )}
                 >
                   <item.icon className="size-4" />
                   {item.label}
                   {item.count != null && item.count > 0 ? (
-                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                        tab === item.key
+                          ? "bg-sky-100 text-sky-700"
+                          : "bg-gray-100 text-gray-600",
+                      )}
+                    >
                       {item.count}
                     </span>
                   ) : null}
                   {tab === item.key ? (
-                    <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-primary" />
+                    <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-primary" />
                   ) : null}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="min-h-[360px] flex-1 bg-slate-50/30 p-3">
+          <div className="min-h-[360px] flex-1 bg-sky-50/70 p-4">
         {tab === "conversation" ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
             <ChatBubble
               isMine={false}
               name="Original report"
@@ -634,7 +662,7 @@ export function TicketDetailPanel({ ticketId }: { ticketId: number }) {
                 );
               })}
 
-            <div className="pt-1">
+            <div className="pt-2">
               <ConversationReplyBox
                 value={comment}
                 onChange={setComment}

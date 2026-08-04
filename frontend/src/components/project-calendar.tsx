@@ -15,11 +15,15 @@ import { Select, Textarea } from "./ui/input";
 import { Backdrop } from "./tailgrids/core/overlay";
 import { Modal } from "react-aria-components";
 import {
+  DocxPreviewPane,
+  isDocxDocument,
   isImageDocument,
+  isLegacyDocDocument,
   isLegacyPptDocument,
   isPdfDocument,
   isPreviewableDocument,
   isPptxDocument,
+  needsArrayBufferPreview,
   PptxPreviewPane,
 } from "./pptx-preview-pane";
 import { api } from "../lib/api";
@@ -464,7 +468,7 @@ export function ProjectCalendarPanel({ projectId }: { projectId: number }) {
       const blob = await api.getBlob(`/calendar/${editing.id}/final-reports/${report.id}/content`);
       const resolvedType = report.content_type || blob.type;
       const blobUrl = URL.createObjectURL(blob);
-      const arrayBuffer = isPptxDocument(resolvedType, report.filename)
+      const arrayBuffer = needsArrayBufferPreview(resolvedType, report.filename)
         ? await blob.arrayBuffer()
         : undefined;
       setPreviewReport((current) => {
@@ -1290,6 +1294,9 @@ export function ProjectCalendarPanel({ projectId }: { projectId: number }) {
                       className="max-h-full max-w-full object-contain"
                     />
                   </div>
+                ) : isDocxDocument(previewReport.contentType, previewReport.filename) &&
+                  previewReport.arrayBuffer ? (
+                  <DocxPreviewPane arrayBuffer={previewReport.arrayBuffer} />
                 ) : isPptxDocument(previewReport.contentType, previewReport.filename) &&
                   previewReport.arrayBuffer ? (
                   <PptxPreviewPane arrayBuffer={previewReport.arrayBuffer} />
@@ -1312,7 +1319,9 @@ export function ProjectCalendarPanel({ projectId }: { projectId: number }) {
                   <p className="text-sm text-gray-600">
                     {isLegacyPptDocument(previewReport.contentType, previewReport.filename)
                       ? "Legacy .ppt files can’t be previewed in the browser. Re-save as .pptx, or download to open locally."
-                      : "Preview is not available for this file type. Download it to open locally."}
+                      : isLegacyDocDocument(previewReport.contentType, previewReport.filename)
+                        ? "Legacy .doc files can’t be previewed in the browser. Re-save as .docx, or download to open locally."
+                        : "Preview is not available for this file type. Download it to open locally."}
                   </p>
                   <a
                     href={previewReport.blobUrl}

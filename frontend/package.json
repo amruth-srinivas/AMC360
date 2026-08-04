@@ -31,6 +31,7 @@
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "docx-preview": "^0.4.0",
     "framer-motion": "^12.23.12",
     "lucide-react": "^0.542.0",
     "pptx-preview": "^1.0.7",

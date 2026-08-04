@@ -16,7 +16,7 @@ export interface BackdropProps extends AriaModalOverlayProps {}
 
 export function Backdrop({
   className,
-  isDismissable = true,
+  isDismissable = false,
   ...props
 }: BackdropProps) {
   return (
