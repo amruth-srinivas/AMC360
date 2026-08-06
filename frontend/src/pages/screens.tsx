@@ -3,7 +3,7 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "framer-motion";
 import {
   Bar,
   BarChart,
@@ -50,7 +50,7 @@ import {
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal } from "react-aria-components";
 
 import { Badge } from "../components/ui/badge";
@@ -527,10 +527,56 @@ function useEvents() {
 
 export function LoginPage() {
   const { login } = useAuth();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
     defaultValues: { identifier: "admin@example.com", password: "admin12345" },
   });
+
+  const pointerX = useMotionValue(0);
+  const pointerY = useMotionValue(0);
+  const x = useSpring(pointerX, { stiffness: 55, damping: 16, mass: 0.35 });
+  const y = useSpring(pointerY, { stiffness: 55, damping: 16, mass: 0.35 });
+
+  // Each blob drifts with a unique depth / direction for a parallax feel.
+  const blobA = {
+    x: useTransform(x, (v) => v * 95),
+    y: useTransform(y, (v) => v * 70),
+  };
+  const blobB = {
+    x: useTransform(x, (v) => v * -110),
+    y: useTransform(y, (v) => v * 55),
+  };
+  const blobC = {
+    x: useTransform(x, (v) => v * 70),
+    y: useTransform(y, (v) => v * -95),
+  };
+  const blobD = {
+    x: useTransform(x, (v) => v * -80),
+    y: useTransform(y, (v) => v * -60),
+  };
+  const spotX = useTransform(x, (v) => `${50 + v * 28}%`);
+  const spotY = useTransform(y, (v) => `${42 + v * 28}%`);
+  const gridShiftX = useTransform(x, (v) => v * 12);
+  const gridShiftY = useTransform(y, (v) => v * 10);
+
+  function handlePanelPointer(event: React.PointerEvent<HTMLDivElement>) {
+    if (reduceMotion) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = ((event.clientY - rect.top) / rect.height) * 2 - 1;
+    pointerX.set(Math.max(-1, Math.min(1, nx)));
+    pointerY.set(Math.max(-1, Math.min(1, ny)));
+  }
+
+  function resetPanelPointer() {
+    pointerX.set(0);
+    pointerY.set(0);
+  }
 
   const onSubmit = form.handleSubmit(async (values) => {
     try {
@@ -550,15 +596,54 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen w-full bg-gray-50">
       {/* ~70% — brand panel */}
-      <div className="relative hidden min-h-screen overflow-hidden bg-[#090E34] lg:flex lg:w-[70%] lg:flex-col lg:justify-between">
+      <div
+        ref={panelRef}
+        className="relative hidden min-h-screen overflow-hidden bg-[#090E34] lg:flex lg:w-[70%] lg:flex-col lg:justify-between"
+        onPointerMove={handlePanelPointer}
+        onPointerLeave={resetPanelPointer}
+      >
         <div className="pointer-events-none absolute inset-0">
-          <div className="login-blob login-blob-a absolute -left-24 -top-28 h-[28rem] w-[28rem] rounded-full bg-primary/35 blur-3xl" />
-          <div className="login-blob login-blob-b absolute right-[12%] top-[18%] h-80 w-80 rounded-full bg-[#6366F1]/25 blur-3xl" />
-          <div className="login-blob login-blob-c absolute bottom-[8%] left-[28%] h-[26rem] w-[26rem] rounded-full bg-[#0EA5E9]/20 blur-3xl" />
-          <div className="login-blob login-blob-d absolute -bottom-20 right-[-4%] h-72 w-72 rounded-full bg-[#14B8A6]/15 blur-3xl" />
-          <div
-            className="absolute inset-0 opacity-[0.08]"
+          <motion.div
+            className="login-blob-track absolute -left-24 -top-28"
+            style={{ x: blobA.x, y: blobA.y }}
+          >
+            <div className="login-blob login-blob-a h-[28rem] w-[28rem] rounded-full bg-primary/40 blur-3xl" />
+          </motion.div>
+          <motion.div
+            className="login-blob-track absolute right-[12%] top-[18%]"
+            style={{ x: blobB.x, y: blobB.y }}
+          >
+            <div className="login-blob login-blob-b h-80 w-80 rounded-full bg-[#6366F1]/30 blur-3xl" />
+          </motion.div>
+          <motion.div
+            className="login-blob-track absolute bottom-[8%] left-[28%]"
+            style={{ x: blobC.x, y: blobC.y }}
+          >
+            <div className="login-blob login-blob-c h-[26rem] w-[26rem] rounded-full bg-[#0EA5E9]/25 blur-3xl" />
+          </motion.div>
+          <motion.div
+            className="login-blob-track absolute -bottom-20 right-[-4%]"
+            style={{ x: blobD.x, y: blobD.y }}
+          >
+            <div className="login-blob login-blob-d h-72 w-72 rounded-full bg-[#14B8A6]/20 blur-3xl" />
+          </motion.div>
+
+          {/* Cursor spotlight */}
+          <motion.div
+            className="absolute h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full"
             style={{
+              left: spotX,
+              top: spotY,
+              background:
+                "radial-gradient(circle, rgba(55,88,249,0.28) 0%, rgba(14,165,233,0.12) 35%, transparent 70%)",
+            }}
+          />
+
+          <motion.div
+            className="absolute inset-0 opacity-[0.09]"
+            style={{
+              x: gridShiftX,
+              y: gridShiftY,
               backgroundImage:
                 "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.55) 1px, transparent 0)",
               backgroundSize: "32px 32px",

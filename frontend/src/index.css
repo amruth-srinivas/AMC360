@@ -583,61 +583,111 @@
 @keyframes login-float-a {
   0%,
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.9;
+  }
+  25% {
+    transform: translate3d(48px, -28px, 0) scale(1.12);
+    opacity: 1;
   }
   50% {
-    transform: translate(40px, 30px) scale(1.08);
+    transform: translate3d(72px, 42px, 0) scale(1.05);
+    opacity: 0.88;
+  }
+  75% {
+    transform: translate3d(-24px, 56px, 0) scale(0.94);
+    opacity: 0.95;
   }
 }
 
 @keyframes login-float-b {
   0%,
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.85;
   }
-  50% {
-    transform: translate(-35px, 45px) scale(1.12);
+  30% {
+    transform: translate3d(-58px, 38px, 0) scale(1.16);
+    opacity: 1;
+  }
+  60% {
+    transform: translate3d(36px, 64px, 0) scale(1.04);
+    opacity: 0.9;
+  }
+  80% {
+    transform: translate3d(-20px, -30px, 0) scale(1.08);
+    opacity: 0.92;
   }
 }
 
 @keyframes login-float-c {
   0%,
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.8;
   }
-  50% {
-    transform: translate(50px, -25px) scale(0.95);
+  35% {
+    transform: translate3d(70px, -48px, 0) scale(0.9);
+    opacity: 1;
+  }
+  65% {
+    transform: translate3d(-40px, -20px, 0) scale(1.1);
+    opacity: 0.88;
   }
 }
 
 @keyframes login-float-d {
   0%,
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.75;
   }
-  50% {
-    transform: translate(-25px, -40px) scale(1.1);
+  40% {
+    transform: translate3d(-52px, -56px, 0) scale(1.15);
+    opacity: 1;
+  }
+  70% {
+    transform: translate3d(28px, 36px, 0) scale(1.02);
+    opacity: 0.85;
   }
 }
 
-.login-blob {
+.login-blob-track {
   will-change: transform;
 }
 
+.login-blob {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
 .login-blob-a {
-  animation: login-float-a 14s ease-in-out infinite;
+  animation: login-float-a 9s ease-in-out infinite;
 }
 
 .login-blob-b {
-  animation: login-float-b 18s ease-in-out infinite;
+  animation: login-float-b 11s ease-in-out infinite;
+  animation-delay: -2s;
 }
 
 .login-blob-c {
-  animation: login-float-c 16s ease-in-out infinite;
+  animation: login-float-c 10s ease-in-out infinite;
+  animation-delay: -4s;
 }
 
 .login-blob-d {
-  animation: login-float-d 20s ease-in-out infinite;
+  animation: login-float-d 12s ease-in-out infinite;
+  animation-delay: -6s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-blob-a,
+  .login-blob-b,
+  .login-blob-c,
+  .login-blob-d {
+    animation: none;
+  }
 }
 
 html,
