@@ -19,6 +19,16 @@ async def list_users(
     return [UserRead.model_validate(item) for item in await list_rows(db, User)]
 
 
+@router.get("/directory", response_model=list[UserRead])
+async def list_user_directory(
+    _: User = Depends(require_roles(RoleEnum.ADMIN, RoleEnum.TEAM_LEAD)),
+    db: AsyncSession = Depends(get_db),
+) -> list[UserRead]:
+    """Lightweight user list for assigning members when creating projects."""
+    rows = await list_rows(db, User)
+    return [UserRead.model_validate(item) for item in rows if item.is_active]
+
+
 @router.post("", response_model=UserRead)
 async def add_user(
     payload: UserCreate,

@@ -15,6 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -32,6 +33,15 @@ class RoleEnum(StrEnum):
     ADMIN = "admin"
     TEAM_LEAD = "team_lead"
     TEAM_MEMBER = "team_member"
+
+
+class UserPresenceStatus(StrEnum):
+    AVAILABLE = "available"
+    BUSY = "busy"
+    DO_NOT_DISTURB = "do_not_disturb"
+    BE_RIGHT_BACK = "be_right_back"
+    AWAY = "away"
+    OFFLINE = "offline"
 
 
 class ReportTemplateType(StrEnum):
@@ -154,6 +164,33 @@ class ProjectDocumentCategory(StrEnum):
     OTHER = "other"
 
 
+class SprintStatus(StrEnum):
+    PLANNED = "planned"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+
+
+class IssueType(StrEnum):
+    EPIC = "epic"
+    STORY = "story"
+    TASK = "task"
+    BUG = "bug"
+
+
+class IssueStatus(StrEnum):
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    IN_REVIEW = "in_review"
+    DONE = "done"
+
+
+class IssuePriority(StrEnum):
+    P0 = "P0"
+    P1 = "P1"
+    P2 = "P2"
+    P3 = "P3"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -166,6 +203,18 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[RoleEnum] = mapped_column(enum_column(RoleEnum), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    avatar_object_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    avatar_content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status_presence: Mapped[UserPresenceStatus] = mapped_column(
+        enum_column(UserPresenceStatus),
+        default=UserPresenceStatus.AVAILABLE,
+        nullable=False,
+    )
+    status_message: Mapped[str | None] = mapped_column(String(280), nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    github_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    website_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -191,6 +240,8 @@ class Project(Base):
     backup_policy_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     rto_target: Mapped[str | None] = mapped_column(String(255))
     rpo_target: Mapped[str | None] = mapped_column(String(255))
+    is_managed_project: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    issue_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -537,3 +588,70 @@ class NotificationLog(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     related_entity: Mapped[str | None] = mapped_column(String(255))
+
+
+class Sprint(Base):
+    __tablename__ = "sprints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    goal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[SprintStatus] = mapped_column(
+        enum_column(SprintStatus), default=SprintStatus.PLANNED, nullable=False
+    )
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class Issue(Base):
+    __tablename__ = "issues"
+    __table_args__ = (UniqueConstraint("project_id", "key", name="uq_issues_project_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    type: Mapped[IssueType] = mapped_column(enum_column(IssueType), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("issues.id"), nullable=True)
+    sprint_id: Mapped[int | None] = mapped_column(ForeignKey("sprints.id"), nullable=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[IssueStatus] = mapped_column(
+        enum_column(IssueStatus), default=IssueStatus.TODO, nullable=False
+    )
+    priority: Mapped[IssuePriority] = mapped_column(
+        enum_column(IssuePriority), default=IssuePriority.P2, nullable=False
+    )
+    assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    story_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    labels: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
+    epic_color: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rank: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class IssueComment(Base):
+    __tablename__ = "issue_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id"), nullable=False, index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

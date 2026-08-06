@@ -170,6 +170,28 @@ def upload_ticket_attachment(
     return object_key
 
 
+def upload_user_avatar(
+    *,
+    user_id: int,
+    filename: str,
+    data: bytes,
+    content_type: str | None = None,
+) -> str:
+    """Upload a user profile photo and return the object key."""
+    ensure_bucket()
+    safe_name = _safe_filename(filename)
+    object_key = f"users/{user_id}/avatar/{uuid.uuid4().hex}_{safe_name}"
+    client = get_minio_client()
+    client.put_object(
+        _bucket_name(),
+        object_key,
+        io.BytesIO(data),
+        length=len(data),
+        content_type=content_type or "application/octet-stream",
+    )
+    return object_key
+
+
 def build_object_url(object_key: str) -> str:
     settings = get_settings()
     base = settings.minio_public_url.rstrip("/")

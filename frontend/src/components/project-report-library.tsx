@@ -18,7 +18,15 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type TouchEvent as ReactTouchEvent,
+} from "react";
 import { Modal } from "react-aria-components";
 import { toast } from "sonner";
 
@@ -129,6 +137,9 @@ type TableRow =
       name: string;
       subtitle: string;
       modified?: string;
+      folderKind: "type" | "period";
+      typeId: number;
+      canRename: boolean;
       onOpen: () => void;
     }
   | {
@@ -141,6 +152,7 @@ type TableRow =
       documentId: number;
       typeId: number;
       canDelete: boolean;
+      canRename: boolean;
       onOpen: () => void;
     }
   | {
@@ -151,6 +163,24 @@ type TableRow =
       modified?: string;
       onOpen: () => void;
     };
+
+type RenameTarget =
+  | { kind: "type"; typeId: number; name: string }
+  | { kind: "period"; typeId: number; name: string }
+  | { kind: "document"; typeId: number; documentId: number; title: string; filename: string };
+
+const SIDEBAR_WIDTH_KEY = "amc-report-library-sidebar-width";
+const SIDEBAR_DEFAULT_WIDTH = 280;
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 560;
+
+function readSidebarWidth() {
+  if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
+  const raw = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+  const parsed = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, parsed));
+}
 
 function emptyTypeForm(): TypeForm {
   return {
@@ -283,6 +313,9 @@ export function ProjectReportLibrary({
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renameFilename, setRenameFilename] = useState("");
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
     filename: string;
@@ -291,7 +324,10 @@ export function ProjectReportLibrary({
     arrayBuffer?: ArrayBuffer;
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const templateInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const layoutRef = useRef<HTMLDivElement>(null);
 
   const types = typesQuery.data ?? [];
   const typeMap = useMemo(() => new Map(types.map((item) => [item.id, item])), [types]);
@@ -315,6 +351,53 @@ export function ProjectReportLibrary({
       if (previewDoc?.blobUrl) URL.revokeObjectURL(previewDoc.blobUrl);
     };
   }, [previewDoc?.blobUrl]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  const onSidebarResizeStart = useCallback((event: ReactMouseEvent | ReactTouchEvent) => {
+    event.preventDefault();
+    setSidebarResizing(true);
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarResizing) return;
+
+    function clampWidth(clientX: number) {
+      const root = layoutRef.current;
+      if (!root) return;
+      const left = root.getBoundingClientRect().left;
+      const next = clientX - left;
+      setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, next)));
+    }
+
+    function onMouseMove(event: MouseEvent) {
+      clampWidth(event.clientX);
+    }
+    function onTouchMove(event: TouchEvent) {
+      const touch = event.touches[0];
+      if (touch) clampWidth(touch.clientX);
+    }
+    function onEnd() {
+      setSidebarResizing(false);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onEnd);
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("touchend", onEnd);
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onEnd);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onEnd);
+    };
+  }, [sidebarResizing]);
 
   async function openReportPreview(path: string, title: string, filename: string, contentType?: string | null) {
     setPreviewLoading(true);
@@ -372,6 +455,9 @@ export function ProjectReportLibrary({
             ? `${formatFrequency(item.frequency_interval, item.frequency_unit)} · ${fileCount} file(s) · ${periods.length} period folder(s)`
             : `As needed · ${fileCount} file(s) · direct upload`,
           modified: item.updated_at || item.created_at,
+          folderKind: "type",
+          typeId: item.id,
+          canRename: canManage,
           onOpen: () => {
             setExpandedTypes((current) => new Set(current).add(item.id));
             setNav({ kind: "type", typeId: item.id });
@@ -419,6 +505,9 @@ export function ProjectReportLibrary({
             name: period,
             subtitle: `${docs.length} completed report${docs.length === 1 ? "" : "s"}`,
             modified: docs[0]?.created_at,
+            folderKind: "period",
+            typeId: activeType.id,
+            canRename: canManage,
             onOpen: () => {
               setNav({ kind: "period", typeId: activeType.id, period });
               setSearch("");
@@ -440,6 +529,7 @@ export function ProjectReportLibrary({
             documentId: doc.id,
             typeId: activeType.id,
             canDelete: canManage || doc.uploaded_by === user?.id,
+            canRename: canManage || doc.uploaded_by === user?.id,
             onOpen: () =>
               void openReportPreview(
                 `/projects/${projectId}/report-types/${activeType.id}/documents/${doc.id}/content`,
@@ -465,6 +555,7 @@ export function ProjectReportLibrary({
           documentId: doc.id,
           typeId: activeType.id,
           canDelete: canManage || doc.uploaded_by === user?.id,
+          canRename: canManage || doc.uploaded_by === user?.id,
           onOpen: () =>
             void openReportPreview(
               `/projects/${projectId}/report-types/${activeType.id}/documents/${doc.id}/content`,
@@ -490,6 +581,7 @@ export function ProjectReportLibrary({
         documentId: doc.id,
         typeId: activeType.id,
         canDelete: canManage || doc.uploaded_by === user?.id,
+        canRename: canManage || doc.uploaded_by === user?.id,
         onOpen: () =>
           void openReportPreview(
             `/projects/${projectId}/report-types/${activeType.id}/documents/${doc.id}/content`,
@@ -692,6 +784,76 @@ export function ProjectReportLibrary({
     onError: (error: Error) => toast.error(error.message),
   });
 
+  function openRename(target: RenameTarget) {
+    setRenameTarget(target);
+    if (target.kind === "document") {
+      setRenameTitle(target.title);
+      setRenameFilename(target.filename);
+    } else {
+      setRenameTitle(target.name);
+      setRenameFilename("");
+    }
+  }
+
+  function closeRename() {
+    setRenameTarget(null);
+    setRenameTitle("");
+    setRenameFilename("");
+  }
+
+  const renameMutation = useMutation({
+    mutationFn: async () => {
+      if (!renameTarget) throw new Error("Nothing to rename");
+      const name = renameTitle.trim();
+      if (!name) throw new Error("Name is required");
+
+      if (renameTarget.kind === "type") {
+        return api.put<ReportType>(`/projects/${projectId}/report-types/${renameTarget.typeId}`, {
+          name,
+        });
+      }
+
+      if (renameTarget.kind === "period") {
+        await api.put(`/projects/${projectId}/report-types/${renameTarget.typeId}/periods/rename`, {
+          from_label: renameTarget.name,
+          to_label: name,
+        });
+        return { kind: "period" as const, typeId: renameTarget.typeId, to: name };
+      }
+
+      const filename = renameFilename.trim();
+      if (!filename) throw new Error("File name is required");
+      return api.put<ReportDocument>(
+        `/projects/${projectId}/report-types/${renameTarget.typeId}/documents/${renameTarget.documentId}`,
+        { title: name, filename },
+      );
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["project-report-types", projectId] });
+      if (
+        renameTarget?.kind === "period" &&
+        result &&
+        typeof result === "object" &&
+        "kind" in result &&
+        result.kind === "period" &&
+        nav.kind === "period" &&
+        nav.typeId === result.typeId &&
+        nav.period === renameTarget.name
+      ) {
+        setNav({ kind: "period", typeId: result.typeId, period: result.to });
+      }
+      closeRename();
+      toast.success(
+        renameTarget?.kind === "document"
+          ? "Document renamed"
+          : renameTarget?.kind === "period"
+            ? "Period folder renamed"
+            : "Folder renamed",
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   function toggleSidebarType(typeId: number) {
     setExpandedTypes((current) => {
       const next = new Set(current);
@@ -742,10 +904,22 @@ export function ProjectReportLibrary({
 
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-      <div className="grid min-h-[620px] lg:grid-cols-[260px_1fr]">
-        {/* Sidebar */}
-        <aside className="border-b border-gray-100 bg-gray-50/80 lg:border-b-0 lg:border-r">
-          <div className="max-h-[580px] overflow-y-auto p-2 pt-3">
+      <div
+        ref={layoutRef}
+        className={cn(
+          "flex min-h-[620px] flex-col lg:flex-row",
+          sidebarResizing && "select-none",
+        )}
+        style={{ ["--report-sidebar-width" as string]: `${sidebarWidth}px` }}
+      >
+        {/* Sidebar — drag the right edge on large screens to resize */}
+        <aside
+          className={cn(
+            "relative w-full shrink-0 border-b border-gray-100 bg-gray-50/80 lg:border-b-0 lg:border-r",
+            "lg:w-[var(--report-sidebar-width)]",
+          )}
+        >
+          <div className="max-h-[580px] overflow-y-auto overflow-x-hidden p-2 pt-3 lg:max-h-[620px]">
             <button
               type="button"
               onClick={() => {
@@ -777,11 +951,11 @@ export function ProjectReportLibrary({
                     nav.kind !== "root" && nav.typeId === item.id && nav.kind === "type";
                   return (
                     <li key={item.id}>
-                      <div className="flex items-center gap-0.5">
+                      <div className="flex items-start gap-0.5">
                         <button
                           type="button"
                           onClick={() => toggleSidebarType(item.id)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:bg-white hover:text-gray-700"
+                          className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white hover:text-gray-700"
                           aria-label={expanded ? "Collapse" : "Expand"}
                         >
                           <ChevronRight
@@ -791,19 +965,22 @@ export function ProjectReportLibrary({
                         </button>
                         <button
                           type="button"
+                          title={item.name}
                           onClick={() => {
                             setExpandedTypes((current) => new Set(current).add(item.id));
                             setNav({ kind: "type", typeId: item.id });
                             setSearch("");
                           }}
-                          className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                          className={`flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
                             selected
                               ? "bg-primary/10 font-semibold text-primary"
                               : "text-gray-700 hover:bg-white"
                           }`}
                         >
-                          <PetiteIcon tone="amber" icon={expanded ? FolderOpen : Folder} />
-                          <span className="truncate">{item.name}</span>
+                          <span className="mt-0.5 shrink-0">
+                            <PetiteIcon tone="amber" icon={expanded ? FolderOpen : Folder} />
+                          </span>
+                          <span className="break-words leading-snug">{item.name}</span>
                         </button>
                       </div>
                       {expanded ? (
@@ -823,18 +1000,21 @@ export function ProjectReportLibrary({
                                   <li key={period}>
                                     <button
                                       type="button"
+                                      title={period}
                                       onClick={() => {
                                         setNav({ kind: "period", typeId: item.id, period });
                                         setSearch("");
                                       }}
-                                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                                      className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
                                         periodSelected
                                           ? "bg-primary/10 font-semibold text-primary"
                                           : "text-gray-600 hover:bg-white"
                                       }`}
                                     >
-                                      <PetiteIcon tone="sky" icon={Folder} />
-                                      <span className="truncate">{period}</span>
+                                      <span className="mt-0.5 shrink-0">
+                                        <PetiteIcon tone="sky" icon={Folder} />
+                                      </span>
+                                      <span className="break-words leading-snug">{period}</span>
                                     </button>
                                   </li>
                                 );
@@ -854,10 +1034,36 @@ export function ProjectReportLibrary({
               </ul>
             )}
           </div>
+
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize folder list"
+            title="Drag to resize · double-click to reset"
+            tabIndex={0}
+            onMouseDown={onSidebarResizeStart}
+            onTouchStart={onSidebarResizeStart}
+            onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, w - 16));
+              }
+              if (event.key === "ArrowRight") {
+                event.preventDefault();
+                setSidebarWidth((w) => Math.min(SIDEBAR_MAX_WIDTH, w + 16));
+              }
+            }}
+            className={cn(
+              "absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize touch-none lg:block",
+              "bg-transparent hover:bg-primary/25 focus:bg-primary/30 focus:outline-none",
+              sidebarResizing && "bg-primary/40",
+            )}
+          />
         </aside>
 
         {/* Main pane */}
-        <section className="flex min-w-0 flex-col">
+        <section className="flex min-w-0 flex-1 flex-col">
           <div className="space-y-3 border-b border-gray-100 px-4 py-3">
             {breadcrumb}
 
@@ -1018,36 +1224,71 @@ export function ProjectReportLibrary({
                       className="border-t border-gray-50 transition hover:bg-primary/[0.03]"
                     >
                       <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={row.onOpen}
-                          className="flex min-w-0 items-center gap-2.5 text-left"
-                        >
-                          {row.kind === "folder" ? (
-                            <PetiteIcon
-                              tone={nav.kind === "root" ? "amber" : "sky"}
-                              icon={Folder}
-                            />
-                          ) : row.kind === "template" ? (
-                            <PetiteIcon tone="violet" icon={FileText} />
-                          ) : (
-                            <PetiteIcon tone="emerald" icon={FileText} />
-                          )}
-                          <span className="min-w-0">
-                            <span className="block truncate font-medium text-gray-900">
-                              {row.name}
-                            </span>
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <button
+                            type="button"
+                            onClick={row.onOpen}
+                            className="flex shrink-0 items-center self-start pt-0.5"
+                            aria-label={`Open ${row.name}`}
+                          >
                             {row.kind === "folder" ? (
-                              <span className="block truncate text-[11px] text-gray-400">
-                                {row.subtitle}
-                              </span>
+                              <PetiteIcon
+                                tone={nav.kind === "root" ? "amber" : "sky"}
+                                icon={Folder}
+                              />
+                            ) : row.kind === "template" ? (
+                              <PetiteIcon tone="violet" icon={FileText} />
                             ) : (
-                              <span className="block truncate font-mono text-[11px] text-gray-400">
-                                {row.filename}
-                              </span>
+                              <PetiteIcon tone="emerald" icon={FileText} />
                             )}
-                          </span>
-                        </button>
+                          </button>
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={row.onOpen}
+                                className="truncate text-left font-medium text-gray-900 hover:text-primary"
+                              >
+                                {row.name}
+                              </button>
+                              {(row.kind === "folder" && row.canRename) ||
+                              (row.kind === "file" && row.canRename) ? (
+                                <button
+                                  type="button"
+                                  title="Rename"
+                                  aria-label={`Rename ${row.name}`}
+                                  onClick={() => {
+                                    if (row.kind === "folder") {
+                                      openRename(
+                                        row.folderKind === "type"
+                                          ? { kind: "type", typeId: row.typeId, name: row.name }
+                                          : { kind: "period", typeId: row.typeId, name: row.name },
+                                      );
+                                    } else {
+                                      openRename({
+                                        kind: "document",
+                                        typeId: row.typeId,
+                                        documentId: row.documentId,
+                                        title: row.name,
+                                        filename: row.filename,
+                                      });
+                                    }
+                                  }}
+                                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-400 transition hover:bg-gray-100 hover:text-primary"
+                                >
+                                  <Pencil className="size-3" strokeWidth={2} />
+                                </button>
+                              ) : null}
+                            </div>
+                            {row.kind === "folder" ? (
+                              <p className="mt-0.5 truncate text-[11px] text-gray-400">{row.subtitle}</p>
+                            ) : (
+                              <p className="mt-0.5 truncate font-mono text-[11px] text-gray-400">
+                                {row.filename}
+                              </p>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500">
                         {row.kind === "folder"
@@ -1098,6 +1339,77 @@ export function ProjectReportLibrary({
           </div>
         </section>
       </div>
+
+      {/* Rename folder / document */}
+      <Backdrop
+        isOpen={Boolean(renameTarget)}
+        onOpenChange={(open) => {
+          if (!open) closeRename();
+        }}
+      >
+        <Modal>
+          <div className="fixed left-1/2 top-1/2 w-full max-w-md -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none max-sm:max-w-[calc(100%-1.5rem)]">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">
+                  {renameTarget?.kind === "document"
+                    ? "Rename document"
+                    : renameTarget?.kind === "period"
+                      ? "Rename period folder"
+                      : "Rename folder"}
+                </h2>
+                <p className="text-xs text-gray-500">
+                  {renameTarget?.kind === "document"
+                    ? "Update the display name and download file name."
+                    : "Choose a new name for this item."}
+                </p>
+              </div>
+              <CompactAction tone="slate" icon={X} title="Close" onClick={closeRename} />
+            </div>
+            <form
+              className="space-y-4 px-5 py-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                renameMutation.mutate();
+              }}
+            >
+              <FormField
+                label={
+                  renameTarget?.kind === "document"
+                    ? "Document name"
+                    : renameTarget?.kind === "period"
+                      ? "Period folder name"
+                      : "Folder name"
+                }
+              >
+                <IconInput
+                  value={renameTitle}
+                  onChange={(value) => setRenameTitle(String(value))}
+                  placeholder="Name"
+                  autoFocus
+                />
+              </FormField>
+              {renameTarget?.kind === "document" ? (
+                <FormField label="File name">
+                  <IconInput
+                    value={renameFilename}
+                    onChange={(value) => setRenameFilename(String(value))}
+                    placeholder="e.g. report-q1.docx"
+                  />
+                </FormField>
+              ) : null}
+              <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
+                <Button type="button" size="sm" variant="outline" onClick={closeRename}>
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm" disabled={renameMutation.isPending}>
+                  {renameMutation.isPending ? "Saving…" : "Save"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </Modal>
+      </Backdrop>
 
       {/* Create / edit type folder */}
       <Backdrop

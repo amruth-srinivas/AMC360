@@ -4,7 +4,7 @@
     {
       "label": "backend",
       "type": "shell",
-      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe -m uvicorn app.main:app --host 172.18.100.54 --port 8954 --reload",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe -m alembic upgrade head && ${workspaceFolder}/backend/.venv/Scripts/python.exe -m uvicorn app.main:app --host 172.18.100.54 --port 8954 --reload",
       "options": {
         "cwd": "${workspaceFolder}/backend",
         "env": {
@@ -12,7 +12,7 @@
         }
       },
       "windows": {
-        "command": "${workspaceFolder}\\backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 172.18.100.54 --port 8954 --reload"
+        "command": "${workspaceFolder}\\backend\\.venv\\Scripts\\python.exe -m alembic upgrade head; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; ${workspaceFolder}\\backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 172.18.100.54 --port 8954 --reload"
       },
       "isBackground": true,
       "problemMatcher": {
@@ -36,9 +36,12 @@
     {
       "label": "frontend",
       "type": "shell",
-      "command": "npm run dev -- --host 172.18.100.54 --port 5173",
+      "command": "npx vite --host=172.18.100.54 --port=5177 --strictPort",
       "options": {
-        "cwd": "${workspaceFolder}/frontend"
+        "cwd": "${workspaceFolder}/frontend",
+        "env": {
+          "VITE_API_URL": "http://172.18.100.54:8954/api/v1"
+        }
       },
       "isBackground": true,
       "problemMatcher": {
@@ -49,7 +52,7 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".",
-          "endsPattern": "(Local:|ready in)"
+          "endsPattern": "(Local:|Network:|ready in)"
         }
       },
       "presentation": {
@@ -61,7 +64,7 @@
     },
     {
       "label": "dev:all",
-      "detail": "Start backend (8954) + frontend (5173)",
+      "detail": "Start backend + frontend on 172.18.100.54 (8954 / 5177)",
       "dependsOn": ["backend", "frontend"],
       "dependsOrder": "parallel",
       "problemMatcher": [],

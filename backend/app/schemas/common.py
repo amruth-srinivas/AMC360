@@ -1,23 +1,28 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
 
 from app.models.entities import (
     ApprovalStatus,
     BackupStatus,
     CalendarEventStatus,
     DrillOutcome,
+    IssuePriority,
+    IssueStatus,
+    IssueType,
     ProjectStatus,
     RCAStatus,
     ReportTemplateType,
     RoleEnum,
+    SprintStatus,
     SubmissionStatus,
     TicketCategory,
     TicketIssueType,
     TicketPriority,
     TicketSource,
     TicketStatus,
+    UserPresenceStatus,
 )
 
 
@@ -48,6 +53,12 @@ class UserBase(BaseModel):
     designation: str | None = None
     role: RoleEnum
     is_active: bool = True
+    status_presence: UserPresenceStatus = UserPresenceStatus.AVAILABLE
+    status_message: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    website_url: str | None = None
+    bio: str | None = None
 
 
 class UserCreate(UserBase):
@@ -63,11 +74,42 @@ class UserUpdate(BaseModel):
     role: RoleEnum | None = None
     password: str | None = None
     is_active: bool | None = None
+    status_presence: UserPresenceStatus | None = None
+    status_message: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    website_url: str | None = None
+    bio: str | None = None
+    avatar_object_key: str | None = None
+    avatar_content_type: str | None = None
+
+
+class UserSelfUpdate(BaseModel):
+    """Profile fields a signed-in user may change for themselves (no role/active)."""
+
+    name: str | None = None
+    employee_id: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    designation: str | None = None
+    password: str | None = None
+    status_presence: UserPresenceStatus | None = None
+    status_message: str | None = Field(default=None, max_length=280)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    github_url: str | None = Field(default=None, max_length=500)
+    website_url: str | None = Field(default=None, max_length=500)
+    bio: str | None = Field(default=None, max_length=500)
 
 
 class UserRead(UserBase, ORMModel):
     id: int
     created_at: datetime
+    avatar_object_key: str | None = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_avatar(self) -> bool:
+        return bool(self.avatar_object_key)
 
 
 class ContactPerson(BaseModel):
@@ -98,6 +140,7 @@ class ProjectBase(BaseModel):
     backup_policy_json: dict[str, Any] = {}
     rto_target: str | None = None
     rpo_target: str | None = None
+    is_managed_project: bool = False
     member_ids: list[int] = []
 
 
@@ -118,6 +161,7 @@ class ProjectUpdate(BaseModel):
     backup_policy_json: dict[str, Any] | None = None
     rto_target: str | None = None
     rpo_target: str | None = None
+    is_managed_project: bool | None = None
     member_ids: list[int] | None = None
     amc_terms_object_key: str | None = None
     amc_terms_filename: str | None = None
@@ -153,6 +197,7 @@ class ProjectRead(ORMModel):
     backup_policy_json: dict[str, Any]
     rto_target: str | None
     rpo_target: str | None
+    is_managed_project: bool = False
     created_at: datetime
     member_ids: list[int] = []
     members: list[ProjectUserSummary] = []
@@ -514,6 +559,18 @@ class ProjectReportDocumentRead(ORMModel):
     created_at: datetime
 
 
+class ProjectReportDocumentUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    filename: str | None = Field(default=None, min_length=1, max_length=255)
+    period_label: str | None = Field(default=None, max_length=120)
+    notes: str | None = None
+
+
+class ProjectReportPeriodRename(BaseModel):
+    from_label: str = Field(..., min_length=1, max_length=120)
+    to_label: str = Field(..., min_length=1, max_length=120)
+
+
 class ProjectReportTypeBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=150)
     description: str | None = None
@@ -544,4 +601,167 @@ class ProjectReportTypeRead(ProjectReportTypeBase, ORMModel):
     documents: list[ProjectReportDocumentRead] = []
 
 
+# --- Delivery issues (Jira-style workspace) ---
+
+
+class SprintCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    goal: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class SprintUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    goal: str | None = None
+    status: SprintStatus | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class SprintRead(ORMModel):
+    id: int
+    project_id: int
+    name: str
+    goal: str | None = None
+    status: SprintStatus
+    start_date: date | None = None
+    end_date: date | None = None
+    created_at: datetime
+    updated_at: datetime
+    issue_count: int = 0
+
+
+class SprintCompleteRequest(BaseModel):
+    incomplete_destination: str = Field(
+        default="backlog",
+        pattern="^(backlog|next_sprint)$",
+    )
+    next_sprint_id: int | None = None
+
+
+class IssueCreate(BaseModel):
+    title: str = Field(..., min_length=1)
+    type: IssueType = IssueType.TASK
+    description: str | None = None
+    parent_id: int | None = None
+    sprint_id: int | None = None
+    status: IssueStatus = IssueStatus.TODO
+    priority: IssuePriority = IssuePriority.P2
+    assignee_id: int | None = None
+    story_points: int | None = Field(default=None, ge=0, le=100)
+    labels: list[str] = []
+    epic_color: str | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+
+
+class IssueUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1)
+    type: IssueType | None = None
+    description: str | None = None
+    parent_id: int | None = None
+    sprint_id: int | None = None
+    status: IssueStatus | None = None
+    priority: IssuePriority | None = None
+    assignee_id: int | None = None
+    story_points: int | None = Field(default=None, ge=0, le=100)
+    labels: list[str] | None = None
+    epic_color: str | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    rank: float | None = None
+    clear_parent: bool = False
+    clear_sprint: bool = False
+    clear_assignee: bool = False
+
+
+class IssueRankUpdate(BaseModel):
+    before_id: int | None = None
+    after_id: int | None = None
+    sprint_id: int | None = None
+    clear_sprint: bool = False
+    status: IssueStatus | None = None
+
+
+class IssueCommentCreate(BaseModel):
+    body: str = Field(..., min_length=1)
+
+
+class IssueCommentRead(ORMModel):
+    id: int
+    issue_id: int
+    author_id: int
+    author_name: str | None = None
+    body: str
+    created_at: datetime
+
+
+class IssueRead(ORMModel):
+    id: int
+    project_id: int
+    key: str
+    type: IssueType
+    parent_id: int | None = None
+    sprint_id: int | None = None
+    title: str
+    description: str | None = None
+    status: IssueStatus
+    priority: IssuePriority
+    assignee_id: int | None = None
+    assignee_name: str | None = None
+    reporter_id: int
+    reporter_name: str | None = None
+    story_points: int | None = None
+    labels: list[str] = []
+    epic_color: str | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    rank: float
+    created_at: datetime
+    updated_at: datetime
+    children: list["IssueRead"] = []
+    comments: list[IssueCommentRead] = []
+    child_count: int = 0
+    child_done_count: int = 0
+
+
+class BoardColumnRead(BaseModel):
+    status: IssueStatus
+    issues: list[IssueRead]
+
+
+class BoardRead(BaseModel):
+    sprint_id: int | None = None
+    columns: list[BoardColumnRead]
+
+
+class TimelineIssueRead(BaseModel):
+    id: int
+    key: str
+    type: IssueType
+    title: str
+    parent_id: int | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    epic_color: str | None = None
+    status: IssueStatus
+    children: list["TimelineIssueRead"] = []
+
+
+class TimelineSprintMarker(BaseModel):
+    id: int
+    name: str
+    start_date: date | None = None
+    end_date: date | None = None
+    status: SprintStatus
+
+
+class TimelineRead(BaseModel):
+    issues: list[TimelineIssueRead]
+    sprints: list[TimelineSprintMarker]
+
+
 TokenResponse.model_rebuild()
+IssueRead.model_rebuild()
+TimelineIssueRead.model_rebuild()

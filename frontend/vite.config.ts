@@ -14,10 +14,11 @@ export default defineConfig({
   },
   server: {
     host: "172.18.100.54",
-    port: 5173,
+    port: 5175,
+    strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: "http://172.18.100.54:8954",
         changeOrigin: true,
       },
     },

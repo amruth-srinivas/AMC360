@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import assert_project_access, get_current_user, require_roles
 from app.core.db import get_db
 from app.models.entities import (
     Project,
@@ -23,6 +23,7 @@ from app.schemas.common import (
     ProjectUpdate,
     ProjectUserSummary,
 )
+from pydantic import BaseModel
 from app.services.crud import (
     create_project,
     create_project_document,
@@ -45,6 +46,10 @@ from app.services.storage import (
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+class ProjectManagedBody(BaseModel):
+    is_managed_project: bool
 
 
 def to_document_read(document: ProjectDocument) -> ProjectDocumentRead:
@@ -175,11 +180,17 @@ async def add_project(
     contact_persons: str = Form("[]"),
     member_ids: str = Form("[]"),
     amc_terms: UploadFile | None = File(None),
-    _: User = Depends(require_roles(RoleEnum.ADMIN)),
+    is_managed_project: bool = Form(False),
+    current_user: User = Depends(require_roles(RoleEnum.ADMIN, RoleEnum.TEAM_LEAD)),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRead:
     lead_id = _optional_int(team_lead_id)
     members = _parse_member_ids(member_ids)
+
+    # Team leads can create projects they own; admins may assign any lead.
+    if current_user.role == RoleEnum.TEAM_LEAD:
+        lead_id = current_user.id
+
     if lead_id and lead_id not in members:
         members = [lead_id, *members]
 
@@ -195,6 +206,7 @@ async def add_project(
         company_address=company_address,
         status=status,
         team_lead_id=lead_id,
+        is_managed_project=is_managed_project,
         member_ids=members,
     )
     row = await create_project(db, payload)
@@ -238,6 +250,7 @@ async def edit_project(
     contact_persons: str | None = Form(None),
     member_ids: str | None = Form(None),
     amc_terms: UploadFile | None = File(None),
+    is_managed_project: str | None = Form(None),
     _: User = Depends(require_roles(RoleEnum.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRead:
@@ -266,6 +279,13 @@ async def edit_project(
         ]
     if member_ids is not None:
         updates["member_ids"] = _parse_member_ids(member_ids)
+    if is_managed_project is not None:
+        updates["is_managed_project"] = is_managed_project.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     next_project_no = updates.get("project_no", row.project_no)
     object_key, filename, content_type = await _store_amc_terms(
@@ -292,6 +312,26 @@ async def edit_project(
         )
         await db.refresh(row)
 
+    return await to_project_read(db, row, await get_project_member_ids(db, row.id))
+
+
+@router.patch("/{project_id}/managed", response_model=ProjectRead)
+async def set_managed_project(
+    project_id: int,
+    body: ProjectManagedBody,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectRead:
+    """Toggle delivery Issues workspace for a project (admin or team lead)."""
+    row = await get_required(db, Project, project_id)
+    await assert_project_access(project_id, current_user, db)
+    if current_user.role not in (RoleEnum.ADMIN, RoleEnum.TEAM_LEAD):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    if current_user.role == RoleEnum.TEAM_LEAD and row.team_lead_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only this project's team lead can update")
+    row.is_managed_project = body.is_managed_project
+    await db.commit()
+    await db.refresh(row)
     return await to_project_read(db, row, await get_project_member_ids(db, row.id))
 
 

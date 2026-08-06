@@ -47,7 +47,7 @@ import {
   ArrowLeft,
   Users,
 } from "lucide-react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import type React from "react";
 import { useEffect, useState } from "react";
@@ -110,6 +110,7 @@ import {
   type MaintenanceTicket,
 } from "../components/ticket-detail-panel";
 import { ProjectTicketsPanel } from "../components/project-tickets-panel";
+import { ProjectIssuesPanel } from "../components/project-issues-panel";
 
 type ContactPerson = {
   name: string;
@@ -168,6 +169,7 @@ type Project = {
   amc_terms_url: string | null;
   team_lead_id: number | null;
   team_lead?: ProjectUserSummary | null;
+  is_managed_project?: boolean;
   member_ids: number[];
   members?: ProjectUserSummary[];
   documents?: ProjectDocument[];
@@ -815,7 +817,142 @@ export function DashboardPage() {
 }
 
 export function ProjectsPage() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const projects = useProjects();
+  const canCreateProject = user?.role === "admin" || user?.role === "team_lead";
+  const [createOpen, setCreateOpen] = useState(false);
+
+  const directory = useQuery({
+    queryKey: ["users-directory"],
+    queryFn: () =>
+      api.get<
+        Array<{ id: number; name: string; role: string; email: string; designation: string | null }>
+      >("/users/directory"),
+    enabled: canCreateProject && createOpen,
+  });
+
+  const form = useForm<z.infer<typeof projectSchema>>({
+    resolver: zodResolver(projectSchema),
+    defaultValues: {
+      project_no: "",
+      name: "",
+      client_name: "",
+      customer_name: "",
+      details: "",
+      company_address: "",
+      status: "active",
+      team_lead_id: user?.id,
+      member_ids: [],
+      contact_persons: [{ name: "", designation: "", email: "", phone: "" }],
+    },
+  });
+
+  const contacts = useFieldArray({
+    control: form.control,
+    name: "contact_persons",
+  });
+
+  const watchedMemberIds = form.watch("member_ids") ?? [];
+  const memberCandidates = (directory.data ?? []).filter(
+    (item) => item.role === "team_member" || item.role === "team_lead" || item.role === "admin",
+  );
+
+  function openCreate() {
+    form.reset({
+      project_no: "",
+      name: "",
+      client_name: "",
+      customer_name: "",
+      details: "",
+      company_address: "",
+      status: "active",
+      team_lead_id: user?.id,
+      member_ids: [],
+      contact_persons: [{ name: "", designation: "", email: "", phone: "" }],
+    });
+    setCreateOpen(true);
+  }
+
+  function closeCreate() {
+    setCreateOpen(false);
+    form.reset();
+    if (searchParams.get("create") === "1") {
+      const next = new URLSearchParams(searchParams);
+      next.delete("create");
+      setSearchParams(next, { replace: true });
+    }
+  }
+
+  useEffect(() => {
+    if (!canCreateProject) return;
+    if (searchParams.get("create") === "1" && !createOpen) {
+      openCreate();
+    }
+    // openCreate is intentionally stable enough for create=1 deep link
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canCreateProject, searchParams]);
+
+  const createMutation = useMutation({
+    mutationFn: async (values: z.infer<typeof projectSchema>) => {
+      const data = new FormData();
+      const contactPersons = values.contact_persons
+        .filter((person) => person.name?.trim())
+        .map((person) => ({
+          name: person.name!.trim(),
+          designation: person.designation || null,
+          email: person.email || null,
+          phone: person.phone || null,
+        }));
+      const leadId = user?.role === "team_lead" ? user.id : values.team_lead_id ?? user?.id;
+      const memberIds = Array.from(
+        new Set([...(values.member_ids ?? []), ...(leadId ? [leadId] : [])]),
+      );
+
+      data.append("project_no", values.project_no);
+      data.append("name", values.name);
+      data.append("client_name", values.client_name);
+      data.append("customer_name", values.customer_name);
+      data.append("details", values.details ?? "");
+      data.append("company_address", values.company_address);
+      data.append("status", values.status);
+      data.append("team_lead_id", leadId ? String(leadId) : "");
+      data.append("member_ids", JSON.stringify(memberIds));
+      data.append("contact_persons", JSON.stringify(contactPersons));
+      return api.postForm<Project>("/projects", data);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project created");
+      closeCreate();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  function onSubmit(values: z.infer<typeof projectSchema>) {
+    createMutation.mutate({
+      ...values,
+      contact_persons: values.contact_persons.filter((person) => person.name?.trim()),
+    });
+  }
+
+  function onInvalid(errors: FieldErrors<z.infer<typeof projectSchema>>) {
+    function firstMessage(err: FieldErrors<z.infer<typeof projectSchema>>): string | undefined {
+      for (const value of Object.values(err)) {
+        if (!value) continue;
+        if (typeof value === "object" && "message" in value && value.message) {
+          return String(value.message);
+        }
+        if (typeof value === "object") {
+          const nested = firstMessage(value as FieldErrors<z.infer<typeof projectSchema>>);
+          if (nested) return nested;
+        }
+      }
+      return undefined;
+    }
+    toast.error(firstMessage(errors) ?? "Please complete the required fields before saving.");
+  }
 
   const statusTheme: Record<
     Project["status"],
@@ -854,7 +991,10 @@ export function ProjectsPage() {
 
   return (
     <div>
-      <PageHeader title="Projects" description="Client support projects, ownership, and member assignments." />
+      <PageHeader
+        title="Projects"
+        description="Client support projects, ownership, and member assignments."
+      />
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {(projects.data ?? []).map((project, index) => {
           const docCount = project.documents?.length ?? 0;
@@ -932,6 +1072,230 @@ export function ProjectsPage() {
           );
         })}
       </div>
+
+      {createOpen ? (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <button
+            type="button"
+            aria-label="Close panel"
+            className="absolute inset-0 bg-gray-900/40 backdrop-blur-[1px]"
+            onClick={closeCreate}
+          />
+          <motion.aside
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            className="relative flex h-full w-full max-w-none flex-col bg-white shadow-2xl sm:w-1/2"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-primary/10 bg-primary-light px-5 py-3.5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary shadow-sm">
+                  <FolderKanban className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-900">Add project</h2>
+                  <p className="text-xs text-gray-600">
+                    {user?.role === "team_lead"
+                      ? "You’ll be set as team lead for this project."
+                      : "Create a client support project and assign the team."}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeCreate}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-white/70"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form
+              className="flex min-h-0 flex-1 flex-col"
+              onSubmit={form.handleSubmit(onSubmit, onInvalid)}
+            >
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="Project no" error={form.formState.errors.project_no?.message} icon={Hash}>
+                    <Controller
+                      control={form.control}
+                      name="project_no"
+                      render={({ field }) => <IconInput placeholder="e.g. ISP2022503" {...field} />}
+                    />
+                  </FormField>
+                  <FormField label="Status" error={form.formState.errors.status?.message}>
+                    <Select {...form.register("status")}>
+                      <option value="active">Active</option>
+                      <option value="on_hold">On hold</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </Select>
+                  </FormField>
+                </div>
+                <FormField label="Project name" error={form.formState.errors.name?.message} icon={FolderKanban}>
+                  <Controller
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => <IconInput placeholder="Project name" {...field} />}
+                  />
+                </FormField>
+                <FormField label="Client company" error={form.formState.errors.client_name?.message} icon={Building2}>
+                  <Controller
+                    control={form.control}
+                    name="client_name"
+                    render={({ field }) => <IconInput placeholder="Client company" {...field} />}
+                  />
+                </FormField>
+                <FormField label="Customer name" error={form.formState.errors.customer_name?.message} icon={User}>
+                  <Controller
+                    control={form.control}
+                    name="customer_name"
+                    render={({ field }) => <IconInput placeholder="Primary customer contact" {...field} />}
+                  />
+                </FormField>
+                <FormField label="Company address" error={form.formState.errors.company_address?.message} icon={MapPin}>
+                  <Controller
+                    control={form.control}
+                    name="company_address"
+                    render={({ field }) => <IconInput placeholder="Address" {...field} />}
+                  />
+                </FormField>
+                <FormField label="Details" error={form.formState.errors.details?.message}>
+                  <Textarea rows={3} {...form.register("details")} placeholder="Project overview" />
+                </FormField>
+
+                <div className="rounded-lg border border-gray-100 bg-gray-50/70 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Team lead</p>
+                  <p className="mt-1 text-sm font-medium text-gray-900">
+                    {user?.name ?? "You"}
+                    <span className="ml-1 text-xs font-normal text-gray-500">
+                      {user?.role === "team_lead" ? "(you)" : "(will be set as lead)"}
+                    </span>
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Team members</p>
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-gray-200 p-2">
+                    {directory.isLoading ? (
+                      <p className="px-1 py-2 text-xs text-gray-400">Loading people…</p>
+                    ) : memberCandidates.length === 0 ? (
+                      <p className="px-1 py-2 text-xs text-gray-400">No users available to assign.</p>
+                    ) : (
+                      memberCandidates
+                        .filter((item) => item.id !== user?.id)
+                        .map((item) => {
+                          const checked = watchedMemberIds.includes(item.id);
+                          return (
+                            <label
+                              key={item.id}
+                              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-gray-50"
+                            >
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                checked={checked}
+                                onChange={(event) => {
+                                  const next = event.target.checked
+                                    ? [...watchedMemberIds, item.id]
+                                    : watchedMemberIds.filter((id) => id !== item.id);
+                                  form.setValue("member_ids", next, { shouldDirty: true });
+                                }}
+                              />
+                              <span className="min-w-0 flex-1 truncate font-medium text-gray-800">{item.name}</span>
+                              <span className="text-[11px] text-gray-400">{item.role.replace(/_/g, " ")}</span>
+                            </label>
+                          );
+                        })
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Contact persons
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => contacts.append({ name: "", designation: "", email: "", phone: "" })}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add
+                    </Button>
+                  </div>
+                  {form.formState.errors.contact_persons?.message ||
+                  form.formState.errors.contact_persons?.root?.message ? (
+                    <p className="text-xs text-danger">
+                      {String(
+                        form.formState.errors.contact_persons?.message ||
+                          form.formState.errors.contact_persons?.root?.message,
+                      )}
+                    </p>
+                  ) : null}
+                  <div className="space-y-3">
+                    {contacts.fields.map((field, index) => (
+                      <div key={field.id} className="grid gap-2 rounded-lg border border-gray-100 p-3 sm:grid-cols-2">
+                        <FormField label="Name" icon={User}>
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.name`}
+                            render={({ field: f }) => <IconInput placeholder="Name" {...f} />}
+                          />
+                        </FormField>
+                        <FormField label="Designation" icon={Briefcase}>
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.designation`}
+                            render={({ field: f }) => <IconInput placeholder="Role" {...f} />}
+                          />
+                        </FormField>
+                        <FormField label="Email" icon={Mail}>
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.email`}
+                            render={({ field: f }) => <IconInput type="email" placeholder="Email" {...f} />}
+                          />
+                        </FormField>
+                        <FormField label="Phone" icon={Phone}>
+                          <Controller
+                            control={form.control}
+                            name={`contact_persons.${index}.phone`}
+                            render={({ field: f }) => <IconInput placeholder="Phone" {...f} />}
+                          />
+                        </FormField>
+                        {contacts.fields.length > 1 ? (
+                          <button
+                            type="button"
+                            className="text-left text-xs text-danger sm:col-span-2"
+                            onClick={() => contacts.remove(index)}
+                          >
+                            Remove contact
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex shrink-0 items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+                <Button type="button" size="sm" variant="ghost" onClick={closeCreate}>
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm" disabled={createMutation.isPending}>
+                  {createMutation.isPending ? "Creating…" : "Create project"}
+                </Button>
+              </div>
+            </form>
+          </motion.aside>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -957,7 +1321,7 @@ export function ProjectDetailPage() {
   });
 
   const [activeTab, setActiveTab] = useState<
-    "details" | "tickets" | "reports" | "calendar" | "approvals"
+    "details" | "tickets" | "reports" | "calendar" | "approvals" | "issues"
   >("details");
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
@@ -1003,6 +1367,19 @@ export function ProjectDetailPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const canManageManaged =
+    user?.role === "admin" || Boolean(project?.team_lead_id && project.team_lead_id === user?.id);
+
+  const managedMutation = useMutation({
+    mutationFn: (is_managed_project: boolean) =>
+      api.patch<Project>(`/projects/${projectId}/managed`, { is_managed_project }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project workspace updated");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const tabs = [
     { id: "details" as const, label: "Details" },
     { id: "tickets" as const, label: "Tickets", count: projectTickets.length },
@@ -1013,6 +1390,9 @@ export function ProjectDetailPage() {
     },
     { id: "calendar" as const, label: "Calendar", count: projectEvents.length },
     { id: "approvals" as const, label: "Approvals", count: projectApprovals.length },
+    ...(project?.is_managed_project
+      ? [{ id: "issues" as const, label: "Issues" }]
+      : []),
   ];
 
   async function openDocumentPreview(document: ProjectDocument) {
@@ -1175,6 +1555,31 @@ export function ProjectDetailPage() {
                   </div>
                 ))}
               </div>
+              {canManageManaged ? (
+                <div className="mt-3 flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Managed delivery workspace</p>
+                    <p className="text-xs text-gray-500">
+                      Enable Epics, Stories, Sprints and the Issues tab for active delivery work.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={managedMutation.isPending}
+                    onClick={() => managedMutation.mutate(!project?.is_managed_project)}
+                    className={`relative h-6 w-11 rounded-full transition-colors ${
+                      project?.is_managed_project ? "bg-primary" : "bg-gray-200"
+                    }`}
+                    aria-pressed={Boolean(project?.is_managed_project)}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                        project?.is_managed_project ? "translate-x-5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+              ) : null}
               {project?.details ? (
                 <div className="mt-3 rounded-xl border border-gray-100 bg-gradient-to-br from-primary/[0.03] to-transparent px-4 py-3.5">
                   <p className="text-[11px] font-medium uppercase tracking-wide text-primary/70">Details</p>
@@ -1299,6 +1704,16 @@ export function ProjectDetailPage() {
         ) : null}
 
         {activeTab === "tickets" ? <ProjectTicketsPanel projectId={projectId} /> : null}
+
+        {activeTab === "issues" && project?.is_managed_project ? (
+          <ProjectIssuesPanel
+            projectId={projectId}
+            members={[
+              ...(project.team_lead ? [project.team_lead] : []),
+              ...((project.members ?? []).filter((m) => m.id !== project.team_lead_id)),
+            ]}
+          />
+        ) : null}
 
         {activeTab === "reports" ? (
           <ProjectReportLibrary projectId={projectId} canManage={canManageReports} />

@@ -17,6 +17,8 @@ from app.models.entities import Project, ProjectReportDocument, ProjectReportTyp
 from app.schemas.common import (
     MessageResponse,
     ProjectReportDocumentRead,
+    ProjectReportDocumentUpdate,
+    ProjectReportPeriodRename,
     ProjectReportTypeCreate,
     ProjectReportTypeRead,
     ProjectReportTypeUpdate,
@@ -321,6 +323,89 @@ async def upload_completed_report(
     await db.commit()
     await db.refresh(document)
     return ProjectReportDocumentRead.model_validate(document)
+
+
+@router.put("/{type_id}/documents/{document_id}", response_model=ProjectReportDocumentRead)
+async def update_completed_report(
+    project_id: int,
+    type_id: int,
+    document_id: int,
+    payload: ProjectReportDocumentUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectReportDocumentRead:
+    await assert_project_access(project_id, current_user, db)
+    await _get_type_for_project(db, project_id, type_id)
+    document = await get_required(db, ProjectReportDocument, document_id)
+    if document.project_id != project_id or document.report_type_id != type_id:
+        raise HTTPException(status_code=404, detail="Report document not found")
+
+    project = await get_required(db, Project, project_id)
+    can_edit = (
+        current_user.role == RoleEnum.ADMIN
+        or project.team_lead_id == current_user.id
+        or document.uploaded_by == current_user.id
+    )
+    if not can_edit:
+        raise HTTPException(status_code=403, detail="Insufficient permissions to rename this report")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "title" in data and data["title"] is not None:
+        cleaned = data["title"].strip()
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Document name is required")
+        document.title = cleaned
+    if "filename" in data and data["filename"] is not None:
+        cleaned = data["filename"].strip()
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="File name is required")
+        document.filename = cleaned
+    if "period_label" in data:
+        period = data["period_label"]
+        document.period_label = period.strip() if isinstance(period, str) and period.strip() else None
+    if "notes" in data:
+        notes = data["notes"]
+        document.notes = notes.strip() if isinstance(notes, str) and notes.strip() else None
+
+    await db.commit()
+    await db.refresh(document)
+    return ProjectReportDocumentRead.model_validate(document)
+
+
+@router.put("/{type_id}/periods/rename", response_model=MessageResponse)
+async def rename_period_folder(
+    project_id: int,
+    type_id: int,
+    payload: ProjectReportPeriodRename,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    await assert_project_access(project_id, current_user, db)
+    await assert_can_manage_report_library(project_id, current_user, db)
+    await _get_type_for_project(db, project_id, type_id)
+
+    from_label = payload.from_label.strip()
+    to_label = payload.to_label.strip()
+    if not from_label or not to_label:
+        raise HTTPException(status_code=400, detail="Period name is required")
+    if from_label == to_label:
+        return MessageResponse(message="Period folder unchanged")
+
+    result = await db.execute(
+        select(ProjectReportDocument).where(
+            ProjectReportDocument.report_type_id == type_id,
+            ProjectReportDocument.period_label == from_label,
+        )
+    )
+    documents = list(result.scalars().all())
+    if not documents:
+        raise HTTPException(status_code=404, detail="Period folder not found")
+
+    for document in documents:
+        document.period_label = to_label
+
+    await db.commit()
+    return MessageResponse(message="Period folder renamed")
 
 
 @router.get("/{type_id}/documents/{document_id}/content")

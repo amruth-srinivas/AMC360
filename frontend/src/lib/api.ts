@@ -3,8 +3,8 @@ function resolveApiBaseUrl(): string {
     return import.meta.env.VITE_API_URL.replace(/\/$/, "");
   }
 
-  const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-  return `http://${host}:8000/api/v1`;
+  const host = typeof window !== "undefined" ? window.location.hostname : "172.18.100.54";
+  return `http://${host}:8954/api/v1`;
 }
 
 const API_BASE_URL = resolveApiBaseUrl();
@@ -64,6 +64,8 @@ export const api = {
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
+  patch: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   postForm: <T>(path: string, body: FormData) =>
     request<T>(path, { method: "POST", body }),

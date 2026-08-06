@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     smtp_ssl_tls: bool = False
     notifications_enabled: bool = False
 
-    frontend_url: str = "http://localhost:5173"
+    frontend_url: str = "http://172.18.100.54:5173"
     initial_admin_name: str = "System Admin"
     initial_admin_email: EmailStr = "admin@example.com"
     initial_admin_password: str = "admin12345"

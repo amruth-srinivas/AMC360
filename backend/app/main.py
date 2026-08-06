@@ -43,6 +43,7 @@ app.add_middleware(
         settings.frontend_url,
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://172.18.100.54:5173",
     ],
     allow_origin_regex=r"https?://.*",
     allow_credentials=True,

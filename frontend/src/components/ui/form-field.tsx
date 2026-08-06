@@ -31,8 +31,11 @@ export function FormField({
       <FieldLabel className="text-xs font-medium text-gray-700">{label}</FieldLabel>
       {Icon ? (
         <div className="relative">
-          <Icon className="pointer-events-none absolute left-2.5 top-2.5 z-10 h-3.5 w-3.5 text-gray-400" />
-          <div className="[&_input]:!pl-8 [&_textarea]:!pl-8">{children}</div>
+          <Icon
+            className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-gray-400"
+            aria-hidden
+          />
+          <div className="[&_input]:!pl-10 [&_select]:!pl-10 [&_textarea]:!pl-10">{children}</div>
         </div>
       ) : (
         children
@@ -51,7 +54,7 @@ export function IconInput({
   return (
     <Input
       {...props}
-      className={cn("w-full", className)}
+      className={cn("w-full min-h-11 text-sm", className)}
       value={value ?? ""}
       onChange={(next) => onChange?.(resolveTextValue(next) as never)}
     />
