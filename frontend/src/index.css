@@ -652,10 +652,6 @@
   }
 }
 
-.login-blob-track {
-  will-change: transform;
-}
-
 .login-blob {
   will-change: transform, opacity;
   transform: translateZ(0);
@@ -758,4 +754,40 @@ body,
 }
 .project-calendar .fc .fc-daygrid-block-event .fc-event-title {
   padding: 1px 4px;
+}
+
+/* Issues walkthrough live demo */
+@keyframes tour-demo-press {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.94);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.tour-demo-click {
+  animation: tour-demo-press 0.28s ease;
+  box-shadow: 0 0 0 2px rgba(55, 88, 249, 0.45);
+}
+@keyframes tour-demo-caret {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(55, 88, 249, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(55, 88, 249, 0.4);
+  }
+}
+.tour-demo-typing {
+  animation: tour-demo-caret 0.9s ease-in-out infinite;
+  caret-color: #3758f9;
+}
+.tour-demo-field-active {
+  outline: 2px solid rgba(55, 88, 249, 0.55);
+  outline-offset: 3px;
+  border-radius: 0.75rem;
+  transition: outline 0.15s ease;
 }

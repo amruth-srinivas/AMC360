@@ -673,7 +673,7 @@ export function ProjectCalendarPanel({ projectId }: { projectId: number }) {
 
       <Backdrop isOpen={eventModalOpen} onOpenChange={(open) => (!open ? closeEventModal() : null)}>
         <Modal>
-          <div className="fixed left-1/2 top-1/2 flex max-h-[90vh] w-full max-w-xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl outline-none max-sm:max-w-[calc(100%-1.5rem)]">
+          <div className="fixed left-1/2 top-1/2 flex max-h-[90vh] w-full max-w-none -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl outline-none sm:w-1/2 max-sm:max-w-[calc(100%-1.5rem)]">
             <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
               <div>
                 <h2 className="text-base font-semibold text-gray-900">
@@ -1075,7 +1075,7 @@ export function ProjectCalendarPanel({ projectId }: { projectId: number }) {
         }}
       >
         <Modal>
-          <div className="fixed left-1/2 top-1/2 flex max-h-[85vh] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none max-sm:max-w-[calc(100%-1.5rem)]">
+          <div className="fixed left-1/2 top-1/2 flex max-h-[85vh] w-full max-w-none -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none sm:w-1/2 max-sm:max-w-[calc(100%-1.5rem)]">
             <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
               <div>
                 <h2 className="text-base font-semibold text-gray-900">Configure event types</h2>

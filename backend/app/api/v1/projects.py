@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import assert_project_access, get_current_user, require_roles
+from app.api.deps import get_current_user, require_roles
 from app.core.db import get_db
+from app.core.security import verify_password
 from app.models.entities import (
     Project,
     ProjectDocument,
@@ -23,7 +24,7 @@ from app.schemas.common import (
     ProjectUpdate,
     ProjectUserSummary,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.services.crud import (
     create_project,
     create_project_document,
@@ -49,7 +50,9 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 class ProjectManagedBody(BaseModel):
-    is_managed_project: bool
+    """Irreversible enable of delivery project management (admin + password)."""
+
+    password: str = Field(..., min_length=1)
 
 
 def to_document_read(document: ProjectDocument) -> ProjectDocumentRead:
@@ -180,7 +183,6 @@ async def add_project(
     contact_persons: str = Form("[]"),
     member_ids: str = Form("[]"),
     amc_terms: UploadFile | None = File(None),
-    is_managed_project: bool = Form(False),
     current_user: User = Depends(require_roles(RoleEnum.ADMIN, RoleEnum.TEAM_LEAD)),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRead:
@@ -206,7 +208,7 @@ async def add_project(
         company_address=company_address,
         status=status,
         team_lead_id=lead_id,
-        is_managed_project=is_managed_project,
+        is_managed_project=False,
         member_ids=members,
     )
     row = await create_project(db, payload)
@@ -250,7 +252,6 @@ async def edit_project(
     contact_persons: str | None = Form(None),
     member_ids: str | None = Form(None),
     amc_terms: UploadFile | None = File(None),
-    is_managed_project: str | None = Form(None),
     _: User = Depends(require_roles(RoleEnum.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRead:
@@ -279,13 +280,6 @@ async def edit_project(
         ]
     if member_ids is not None:
         updates["member_ids"] = _parse_member_ids(member_ids)
-    if is_managed_project is not None:
-        updates["is_managed_project"] = is_managed_project.strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
 
     next_project_no = updates.get("project_no", row.project_no)
     object_key, filename, content_type = await _store_amc_terms(
@@ -316,20 +310,22 @@ async def edit_project(
 
 
 @router.patch("/{project_id}/managed", response_model=ProjectRead)
-async def set_managed_project(
+async def enable_managed_project(
     project_id: int,
     body: ProjectManagedBody,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(RoleEnum.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRead:
-    """Toggle delivery Issues workspace for a project (admin or team lead)."""
+    """Irreversibly enable delivery project management (admin only + password)."""
     row = await get_required(db, Project, project_id)
-    await assert_project_access(project_id, current_user, db)
-    if current_user.role not in (RoleEnum.ADMIN, RoleEnum.TEAM_LEAD):
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    if current_user.role == RoleEnum.TEAM_LEAD and row.team_lead_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only this project's team lead can update")
-    row.is_managed_project = body.is_managed_project
+    if row.is_managed_project:
+        raise HTTPException(
+            status_code=400,
+            detail="Project management is already enabled and cannot be turned off",
+        )
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    row.is_managed_project = True
     await db.commit()
     await db.refresh(row)
     return await to_project_read(db, row, await get_project_member_ids(db, row.id))

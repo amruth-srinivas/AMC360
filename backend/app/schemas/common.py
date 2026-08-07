@@ -59,6 +59,7 @@ class UserBase(BaseModel):
     github_url: str | None = None
     website_url: str | None = None
     bio: str | None = None
+    has_seen_issues_tour: bool = False
 
 
 class UserCreate(UserBase):
@@ -82,6 +83,7 @@ class UserUpdate(BaseModel):
     bio: str | None = None
     avatar_object_key: str | None = None
     avatar_content_type: str | None = None
+    has_seen_issues_tour: bool | None = None
 
 
 class UserSelfUpdate(BaseModel):

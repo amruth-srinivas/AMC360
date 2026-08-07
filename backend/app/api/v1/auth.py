@@ -48,6 +48,18 @@ async def me(current_user: User = Depends(get_current_user)) -> UserRead:
     return _to_user_read(current_user)
 
 
+@router.post("/me/issues-tour-seen", response_model=UserRead)
+async def mark_issues_tour_seen(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserRead:
+    """Record that the user has completed or skipped the Issues walkthrough."""
+    if current_user.has_seen_issues_tour:
+        return _to_user_read(current_user)
+    user = await update_user(db, current_user, UserUpdate(has_seen_issues_tour=True))
+    return _to_user_read(user)
+
+
 @router.put("/me", response_model=UserRead)
 async def update_me(
     payload: UserSelfUpdate,

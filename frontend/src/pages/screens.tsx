@@ -3,7 +3,7 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Bar,
   BarChart,
@@ -50,7 +50,7 @@ import {
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "react-aria-components";
 
 import { Badge } from "../components/ui/badge";
@@ -527,56 +527,10 @@ function useEvents() {
 
 export function LoginPage() {
   const { login } = useAuth();
-  const panelRef = useRef<HTMLDivElement>(null);
-  const reduceMotion = useReducedMotion();
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
     defaultValues: { identifier: "admin@example.com", password: "admin12345" },
   });
-
-  const pointerX = useMotionValue(0);
-  const pointerY = useMotionValue(0);
-  const x = useSpring(pointerX, { stiffness: 55, damping: 16, mass: 0.35 });
-  const y = useSpring(pointerY, { stiffness: 55, damping: 16, mass: 0.35 });
-
-  // Each blob drifts with a unique depth / direction for a parallax feel.
-  const blobA = {
-    x: useTransform(x, (v) => v * 95),
-    y: useTransform(y, (v) => v * 70),
-  };
-  const blobB = {
-    x: useTransform(x, (v) => v * -110),
-    y: useTransform(y, (v) => v * 55),
-  };
-  const blobC = {
-    x: useTransform(x, (v) => v * 70),
-    y: useTransform(y, (v) => v * -95),
-  };
-  const blobD = {
-    x: useTransform(x, (v) => v * -80),
-    y: useTransform(y, (v) => v * -60),
-  };
-  const spotX = useTransform(x, (v) => `${50 + v * 28}%`);
-  const spotY = useTransform(y, (v) => `${42 + v * 28}%`);
-  const gridShiftX = useTransform(x, (v) => v * 12);
-  const gridShiftY = useTransform(y, (v) => v * 10);
-
-  function handlePanelPointer(event: React.PointerEvent<HTMLDivElement>) {
-    if (reduceMotion) return;
-    const el = panelRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-    const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    const ny = ((event.clientY - rect.top) / rect.height) * 2 - 1;
-    pointerX.set(Math.max(-1, Math.min(1, nx)));
-    pointerY.set(Math.max(-1, Math.min(1, ny)));
-  }
-
-  function resetPanelPointer() {
-    pointerX.set(0);
-    pointerY.set(0);
-  }
 
   const onSubmit = form.handleSubmit(async (values) => {
     try {
@@ -596,54 +550,15 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen w-full bg-gray-50">
       {/* ~70% — brand panel */}
-      <div
-        ref={panelRef}
-        className="relative hidden min-h-screen overflow-hidden bg-[#090E34] lg:flex lg:w-[70%] lg:flex-col lg:justify-between"
-        onPointerMove={handlePanelPointer}
-        onPointerLeave={resetPanelPointer}
-      >
+      <div className="relative hidden min-h-screen overflow-hidden bg-[#090E34] lg:flex lg:w-[70%] lg:flex-col lg:justify-between">
         <div className="pointer-events-none absolute inset-0">
-          <motion.div
-            className="login-blob-track absolute -left-24 -top-28"
-            style={{ x: blobA.x, y: blobA.y }}
-          >
-            <div className="login-blob login-blob-a h-[28rem] w-[28rem] rounded-full bg-primary/40 blur-3xl" />
-          </motion.div>
-          <motion.div
-            className="login-blob-track absolute right-[12%] top-[18%]"
-            style={{ x: blobB.x, y: blobB.y }}
-          >
-            <div className="login-blob login-blob-b h-80 w-80 rounded-full bg-[#6366F1]/30 blur-3xl" />
-          </motion.div>
-          <motion.div
-            className="login-blob-track absolute bottom-[8%] left-[28%]"
-            style={{ x: blobC.x, y: blobC.y }}
-          >
-            <div className="login-blob login-blob-c h-[26rem] w-[26rem] rounded-full bg-[#0EA5E9]/25 blur-3xl" />
-          </motion.div>
-          <motion.div
-            className="login-blob-track absolute -bottom-20 right-[-4%]"
-            style={{ x: blobD.x, y: blobD.y }}
-          >
-            <div className="login-blob login-blob-d h-72 w-72 rounded-full bg-[#14B8A6]/20 blur-3xl" />
-          </motion.div>
-
-          {/* Cursor spotlight */}
-          <motion.div
-            className="absolute h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full"
-            style={{
-              left: spotX,
-              top: spotY,
-              background:
-                "radial-gradient(circle, rgba(55,88,249,0.28) 0%, rgba(14,165,233,0.12) 35%, transparent 70%)",
-            }}
-          />
-
-          <motion.div
+          <div className="login-blob login-blob-a absolute -left-24 -top-28 h-[28rem] w-[28rem] rounded-full bg-primary/40 blur-3xl" />
+          <div className="login-blob login-blob-b absolute right-[12%] top-[18%] h-80 w-80 rounded-full bg-[#6366F1]/30 blur-3xl" />
+          <div className="login-blob login-blob-c absolute bottom-[8%] left-[28%] h-[26rem] w-[26rem] rounded-full bg-[#0EA5E9]/25 blur-3xl" />
+          <div className="login-blob login-blob-d absolute -bottom-20 right-[-4%] h-72 w-72 rounded-full bg-[#14B8A6]/20 blur-3xl" />
+          <div
             className="absolute inset-0 opacity-[0.09]"
             style={{
-              x: gridShiftX,
-              y: gridShiftY,
               backgroundImage:
                 "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.55) 1px, transparent 0)",
               backgroundSize: "32px 32px",
@@ -1408,6 +1323,8 @@ export function ProjectDetailPage() {
   const [activeTab, setActiveTab] = useState<
     "details" | "tickets" | "reports" | "calendar" | "approvals" | "issues"
   >("details");
+  const [managedConfirmOpen, setManagedConfirmOpen] = useState(false);
+  const [managedPassword, setManagedPassword] = useState("");
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
     filename: string;
@@ -1452,17 +1369,27 @@ export function ProjectDetailPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const canManageManaged =
-    user?.role === "admin" || Boolean(project?.team_lead_id && project.team_lead_id === user?.id);
+  const canEnableProjectManagement = user?.role === "admin" && !project?.is_managed_project;
 
   const managedMutation = useMutation({
-    mutationFn: (is_managed_project: boolean) =>
-      api.patch<Project>(`/projects/${projectId}/managed`, { is_managed_project }),
+    mutationFn: (password: string) =>
+      api.patch<Project>(`/projects/${projectId}/managed`, { password }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      toast.success("Project workspace updated");
+      setManagedConfirmOpen(false);
+      setManagedPassword("");
+      toast.success("Project management enabled");
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      let message = error.message;
+      try {
+        const parsed = JSON.parse(error.message) as { detail?: string };
+        if (parsed?.detail) message = parsed.detail;
+      } catch {
+        /* keep raw */
+      }
+      toast.error(message);
+    },
   });
 
   const tabs = [
@@ -1640,29 +1567,36 @@ export function ProjectDetailPage() {
                   </div>
                 ))}
               </div>
-              {canManageManaged ? (
-                <div className="mt-3 flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">Managed delivery workspace</p>
-                    <p className="text-xs text-gray-500">
-                      Enable Epics, Stories, Sprints and the Issues tab for active delivery work.
+              {project?.is_managed_project || user?.role === "admin" ? (
+                <div className="mt-3 flex flex-col gap-3 rounded-xl border border-gray-100 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900">Enable project management</p>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      Turns on Epics, Stories, Sprints and the Issues tab for delivery work.
+                      {project?.is_managed_project
+                        ? " This is permanently enabled for this project."
+                        : " Admin only · requires password · cannot be undone."}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    disabled={managedMutation.isPending}
-                    onClick={() => managedMutation.mutate(!project?.is_managed_project)}
-                    className={`relative h-6 w-11 rounded-full transition-colors ${
-                      project?.is_managed_project ? "bg-primary" : "bg-gray-200"
-                    }`}
-                    aria-pressed={Boolean(project?.is_managed_project)}
-                  >
-                    <span
-                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                        project?.is_managed_project ? "translate-x-5" : "translate-x-0.5"
-                      }`}
-                    />
-                  </button>
+                  {project?.is_managed_project ? (
+                    <span className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                      <ShieldCheck className="h-4 w-4" />
+                      Enabled
+                    </span>
+                  ) : canEnableProjectManagement ? (
+                    <Button
+                      type="button"
+                      size="default"
+                      className="h-11 min-w-[9.5rem] shrink-0 px-5 text-sm font-semibold"
+                      disabled={managedMutation.isPending}
+                      onClick={() => {
+                        setManagedPassword("");
+                        setManagedConfirmOpen(true);
+                      }}
+                    >
+                      Enable
+                    </Button>
+                  ) : null}
                 </div>
               ) : null}
               {project?.details ? (
@@ -1934,31 +1868,74 @@ export function ProjectDetailPage() {
           </div>
         </Modal>
       </Backdrop>
-    </div>
-  );
-}
 
-function DetailItem({
-  label,
-  value,
-  mono,
-  multiline,
-  className,
-}: {
-  label: string;
-  value?: string | null;
-  mono?: boolean;
-  multiline?: boolean;
-  className?: string;
-}) {
-  return (
-    <div className={className}>
-      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
-      <p
-        className={`text-sm text-gray-900 ${mono ? "font-mono" : ""} ${multiline ? "whitespace-pre-wrap leading-6" : ""}`}
+      <Backdrop
+        isOpen={managedConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setManagedConfirmOpen(false);
+            setManagedPassword("");
+          }
+        }}
       >
-        {value?.trim() ? value : "—"}
-      </p>
+        <Modal>
+          <div
+            className="fixed left-1/2 top-1/2 w-full max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none sm:w-1/2 max-sm:max-w-[calc(100%-1.5rem)]"
+            role="dialog"
+            aria-modal="true"
+          >
+            <DialogHeader className="border-b border-gray-100 px-5 py-4">
+              <DialogTitle>Enable project management</DialogTitle>
+              <DialogDescription>
+                This permanently unlocks Issues (Epics, Stories, Sprints) for this project. Enter
+                your admin password to confirm. This cannot be reversed.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogBody className="space-y-3 px-5 py-4">
+              <FormField label="Your password" icon={Lock}>
+                <PasswordInput
+                  value={managedPassword}
+                  onChange={(next) =>
+                    setManagedPassword(typeof next === "string" ? next : String(next ?? ""))
+                  }
+                  autoComplete="current-password"
+                  placeholder="Confirm with your password"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && managedPassword.trim()) {
+                      e.preventDefault();
+                      managedMutation.mutate(managedPassword);
+                    }
+                  }}
+                />
+              </FormField>
+            </DialogBody>
+            <DialogFooter className="gap-2 border-t border-gray-100 px-5 py-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="default"
+                className="h-10 min-w-[5.5rem]"
+                disabled={managedMutation.isPending}
+                onClick={() => {
+                  setManagedConfirmOpen(false);
+                  setManagedPassword("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="default"
+                className="h-10 min-w-[7.5rem] px-4 font-semibold"
+                disabled={!managedPassword.trim() || managedMutation.isPending}
+                onClick={() => managedMutation.mutate(managedPassword)}
+              >
+                {managedMutation.isPending ? "Enabling…" : "Confirm enable"}
+              </Button>
+            </DialogFooter>
+          </div>
+        </Modal>
+      </Backdrop>
     </div>
   );
 }
@@ -2677,7 +2654,7 @@ export function AdminUsersPage() {
       <Backdrop isOpen={formOpen} onOpenChange={(open) => (open ? setFormOpen(true) : closeForm())}>
         <Modal>
           <div
-            className="w-full max-w-lg max-sm:max-w-[calc(100%-2rem)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+            className="fixed left-1/2 top-1/2 w-full max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none sm:w-1/2 max-sm:max-w-[calc(100%-2rem)]"
             role="dialog"
             aria-modal="true"
           >
@@ -3242,7 +3219,7 @@ export function AdminProjectsPage() {
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 320, damping: 34 }}
-            className="relative flex h-full w-full flex-col bg-white shadow-2xl"
+            className="relative flex h-full w-full max-w-none flex-col bg-white shadow-2xl sm:w-1/2"
             role="dialog"
             aria-modal="true"
           >
@@ -3751,7 +3728,7 @@ export function AdminProjectsPage() {
       >
         <Modal>
           <div
-            className="fixed left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none max-sm:max-w-[calc(100%-1.5rem)]"
+            className="fixed left-1/2 top-1/2 w-full max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none sm:w-1/2 max-sm:max-w-[calc(100%-1.5rem)]"
             role="dialog"
             aria-modal="true"
           >

@@ -303,7 +303,7 @@ export function ProjectTicketsPanel({ projectId }: { projectId: number }) {
         }}
       >
         <Modal>
-          <div className="fixed left-1/2 top-1/2 flex h-[85vh] max-h-[90vh] w-[80vw] max-w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl outline-none max-sm:w-[calc(100%-1.5rem)] max-sm:max-w-[calc(100%-1.5rem)]">
+          <div className="fixed left-1/2 top-1/2 flex h-[85vh] max-h-[90vh] w-full max-w-none -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl outline-none sm:w-1/2 max-sm:max-w-[calc(100%-1.5rem)]">
             <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
               <div className="flex items-start gap-3">
                 <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">

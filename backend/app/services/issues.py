@@ -265,11 +265,31 @@ async def _ensure_no_other_active(
 async def start_sprint(db: AsyncSession, sprint: Sprint) -> Sprint:
     if sprint.status == SprintStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="Cannot start a completed sprint")
+    if not sprint.start_date or not sprint.end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="Set sprint start and end dates before starting",
+        )
     await _ensure_no_other_active(db, sprint.project_id, exclude_id=sprint.id)
     sprint.status = SprintStatus.ACTIVE
     await db.commit()
     await db.refresh(sprint)
     return sprint
+
+
+async def delete_sprint(db: AsyncSession, sprint: Sprint) -> None:
+    if sprint.status == SprintStatus.ACTIVE:
+        raise HTTPException(
+            status_code=400,
+            detail="Complete the active sprint before deleting it",
+        )
+    result = await db.execute(
+        select(Issue).where(Issue.sprint_id == sprint.id, _active_filter())
+    )
+    for issue in result.scalars().all():
+        issue.sprint_id = None
+    await db.delete(sprint)
+    await db.commit()
 
 
 async def complete_sprint(

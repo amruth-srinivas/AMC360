@@ -7,6 +7,7 @@ from app.api.deps import assert_project_access, get_current_user
 from app.core.db import get_db
 from app.models.entities import User
 from app.schemas.common import (
+    MessageResponse,
     SprintCompleteRequest,
     SprintCreate,
     SprintRead,
@@ -15,6 +16,7 @@ from app.schemas.common import (
 from app.services.issues import (
     complete_sprint,
     create_sprint,
+    delete_sprint,
     get_sprint_for_project,
     list_sprints,
     start_sprint,
@@ -86,3 +88,16 @@ async def post_complete_sprint(
     sprint = await get_sprint_for_project(db, project_id, sprint_id)
     sprint = await complete_sprint(db, sprint, payload)
     return await to_sprint_read(db, sprint)
+
+
+@router.delete("/{sprint_id}", response_model=MessageResponse)
+async def delete_sprint_endpoint(
+    project_id: int,
+    sprint_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    await assert_project_access(project_id, current_user, db)
+    sprint = await get_sprint_for_project(db, project_id, sprint_id)
+    await delete_sprint(db, sprint)
+    return MessageResponse(message="Sprint deleted; issues moved to backlog")

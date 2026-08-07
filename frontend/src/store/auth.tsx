@@ -29,6 +29,7 @@ export type CurrentUser = {
   github_url?: string | null;
   website_url?: string | null;
   bio?: string | null;
+  has_seen_issues_tour?: boolean;
 };
 
 type LoginResponse = {

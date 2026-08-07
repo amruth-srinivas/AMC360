@@ -264,7 +264,7 @@ export function EditProfileDialog({
           initial={{ x: "100%" }}
           animate={{ x: 0 }}
           transition={{ type: "spring", stiffness: 380, damping: 36 }}
-          className="fixed inset-y-0 right-0 z-50 flex h-full w-[min(100vw,40rem)] flex-col overflow-hidden border-l border-gray-200 bg-white shadow-2xl outline-none"
+          className="fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-none flex-col overflow-hidden border-l border-gray-200 bg-white shadow-2xl outline-none sm:w-1/2"
           role="dialog"
           aria-modal="true"
           aria-labelledby="edit-profile-title"
